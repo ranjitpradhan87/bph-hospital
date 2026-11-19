@@ -1,0 +1,3 @@
+CREATE DATABASE IF NOT EXISTS bph_hms_test CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+GRANT ALL PRIVILEGES ON bph_hms_test.* TO 'bph_hms'@'%';
+FLUSH PRIVILEGES;

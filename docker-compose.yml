@@ -1,0 +1,23 @@
+# Local MySQL 8.4 for development (matches production). Port 3307 so it never clashes with XAMPP on 3306.
+# Credentials come from .env (DB_PASSWORD); the root password is random and kept in .docker-root-password.local.
+name: bph-laravel
+services:
+  db:
+    image: mysql:8.4
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    environment:
+      MYSQL_DATABASE: bph_hms
+      MYSQL_USER: bph_hms
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${DOCKER_ROOT_PASSWORD}
+    ports: ["127.0.0.1:3307:3306"]
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./docker/mysql-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+volumes:
+  db_data:
