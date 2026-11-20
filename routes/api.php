@@ -126,6 +126,7 @@ Route::middleware('auth')->group(function () {
     Route::post('/appointments', [AppointmentController::class, 'store'])->middleware('permission:appointments.create');
     Route::get('/appointments/{id}', [AppointmentController::class, 'show'])->middleware('permission:appointments.read|appointments.read_own')->whereNumber('id');
     Route::post('/appointments/{id}/pay', [AppointmentController::class, 'pay'])->middleware('permission:portal.access')->whereNumber('id');
+    Route::post('/appointments/{id}/collect-payment', [AppointmentController::class, 'collectPayment'])->middleware('permission:payments.collect')->whereNumber('id');
     Route::post('/appointments/{id}/cancel', [AppointmentController::class, 'cancel'])->middleware('permission:appointments.cancel|portal.access')->whereNumber('id');
     Route::post('/appointments/{id}/reschedule', [AppointmentController::class, 'reschedule'])->middleware('permission:appointments.reschedule|portal.access')->whereNumber('id');
     Route::post('/appointments/{id}/status', [AppointmentController::class, 'setStatus'])->middleware('permission:appointments.update_status|appointments.check_in')->whereNumber('id');

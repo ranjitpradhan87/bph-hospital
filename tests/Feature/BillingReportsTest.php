@@ -164,4 +164,23 @@ class BillingReportsTest extends HmsTestCase
         $this->assertStringContainsString(date('d-m-Y').',500,0,0,500', $csv);
         $this->assertDatabaseHas('audit_logs', ['action' => 'export', 'entity_type' => 'collections_report']);
     }
+
+    public function test_front_desk_collects_the_consultation_fee_on_an_appointment(): void
+    {
+        $d = $this->doctor([$this->department()['id']]);
+        $pid = $this->patientRow(['full_name' => 'Desk Payer']);
+        $appt = $this->appointment($d, $pid, 1);
+        $url = self::API."/appointments/{$appt}/collect-payment";
+
+        $this->actingAs($this->user('nurse'))->postJson($url, ['method' => 'cash'])->assertStatus(403);
+        $this->actingAs($this->user('receptionist'))->postJson($url, ['method' => 'cash', 'amount' => 700])->assertStatus(422);
+        $this->actingAs($this->user('receptionist'))->postJson($url, ['method' => 'cash', 'amount' => 200])->assertOk()->assertJsonPath('payment_status', 'advance_paid');
+        $this->actingAs($this->user('receptionist'))->postJson($url, ['method' => 'upi', 'reference_no' => 'U9'])->assertOk()->assertJsonPath('payment_status', 'paid');
+        $this->actingAs($this->user('receptionist'))->postJson($url, ['method' => 'cash'])->assertStatus(409);
+
+        $bill = DB::table('bills')->where('appointment_id', $appt)->first();
+        $this->assertEquals([600, 600, 'paid'], [$bill->total_amount, $bill->paid_amount, $bill->status]);
+        $this->assertSame(1, DB::table('bills')->where('appointment_id', $appt)->count());
+        $this->assertSame(2, DB::table('payments')->where('bill_id', $bill->id)->count());
+    }
 }

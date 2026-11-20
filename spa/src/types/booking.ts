@@ -11,6 +11,7 @@ export interface Appointment {
   payment_status: string;
   payment_mode: string;
   consultation_fee: string;
+  advance_amount: string;
   reason: string | null;
   queue_number: number | null;
   booking_source: string;

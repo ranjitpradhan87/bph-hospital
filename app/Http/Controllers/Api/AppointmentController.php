@@ -174,6 +174,49 @@ class AppointmentController extends Controller
         return response()->json(BookingService::resumePayment($id));
     }
 
+    /**
+     * Front desk takes the consultation fee. A bill is raised for the appointment on first use (the online advance, if paid,
+     * is counted as already received), and the appointment is marked paid once the bill is settled.
+     */
+    public function collectPayment(Request $request, int $id): JsonResponse
+    {
+        $d = $request->validate(['amount' => ['nullable', 'numeric', 'gt:0'], 'method' => ['required', Rule::in(LabController::METHODS)], 'reference_no' => ['nullable', 'string', 'max:100']]);
+        DB::transaction(function () use ($id, $d, $request) {
+            $a = DB::table('appointments')->where('id', $id)->lockForUpdate()->first() ?? abort(404, 'Appointment not found');
+            $a->patient_id !== null || abort(409, 'This booking has no patient record yet. It is created when the advance is paid.');
+            in_array($a->status, ['cancelled', 'no_show'], true) && abort(409, 'This appointment is '.str_replace('_', ' ', $a->status));
+            $a->payment_status === 'awaiting_payment' && abort(409, 'The patient is still paying the online advance. Wait for it, or cancel the booking.');
+            $a->payment_status === 'refund_due' && abort(409, 'This payment is waiting to be refunded');
+            $fee = round((float) $a->consultation_fee, 2);
+            $fee > 0 || abort(422, 'This appointment has no consultation fee to collect');
+
+            $bill = DB::table('bills')->where('appointment_id', $id)->where('status', '!=', 'cancelled')->whereNotExists(fn ($q) => $q->select(DB::raw(1))->from('lab_orders')->whereColumn('lab_orders.bill_id', 'bills.id'))->first();
+            if (! $bill) {
+                $doctor = DB::table('doctors as d')->join('users as u', 'u.id', '=', 'd.user_id')->where('d.id', $a->doctor_id)->value('u.full_name');
+                $billId = DB::table('bills')->insertGetId(['bill_number' => 'TMP-'.bin2hex(random_bytes(6)), 'patient_id' => $a->patient_id, 'appointment_id' => $id, 'bill_date' => \App\Support\Hospital::today(),
+                    'subtotal' => $fee, 'discount_amount' => 0, 'total_amount' => $fee, 'paid_amount' => 0, 'status' => 'pending', 'notes' => 'Consultation '.$a->appointment_number,
+                    'created_by_user_id' => $request->user()->id, 'created_at' => now(), 'updated_at' => now()]);
+                DB::table('bills')->where('id', $billId)->update(['bill_number' => sprintf('BILL-%s-%05d', date('ymd'), $billId)]);
+                DB::table('bill_items')->insert(['bill_id' => $billId, 'item_type' => 'consultation', 'description' => 'Consultation'.($doctor ? ' - '.$doctor : ''), 'quantity' => 1, 'unit_price' => $fee,
+                    'line_total' => $fee, 'created_at' => now(), 'updated_at' => now()]);
+                $advance = $a->payment_status === 'advance_paid' ? min($fee, round((float) $a->advance_amount, 2)) : 0;
+                if ($advance > 0) {
+                    LabController::pay($billId, $advance, 'upi', $a->payment_reference, $request->user()->id);
+                }
+                $bill = DB::table('bills')->find($billId);
+            }
+            $balance = round($bill->total_amount - $bill->paid_amount, 2);
+            $balance > 0 || abort(409, 'This appointment is already paid in full');
+            $amount = round((float) ($d['amount'] ?? $balance), 2);
+            $payment = LabController::pay($bill->id, $amount, $d['method'], $d['reference_no'] ?? null, $request->user()->id);
+            $settled = $amount >= $balance;
+            DB::table('appointments')->where('id', $id)->update(['payment_status' => $settled ? 'paid' : 'advance_paid', 'paid_at' => $settled ? now() : $a->paid_at, 'updated_at' => now()]);
+            \App\Support\Audit::record('payment', 'appointment', $id, ['bill_id' => $bill->id, 'payment_id' => $payment, 'amount' => $amount, 'method' => $d['method']]);
+        });
+
+        return $this->show($request, $id);
+    }
+
     public function cancel(Request $request, int $id): JsonResponse
     {
         $d = $request->validate(['reason' => ['nullable', 'string', 'max:255']]);

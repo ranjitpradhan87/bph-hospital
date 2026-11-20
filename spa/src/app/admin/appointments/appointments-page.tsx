@@ -70,6 +70,7 @@ function AppointmentsView() {
   const list = useApi<Page<Appointment>>("/appointments", { ...bounds, doctor_id: doctor || undefined, status: status || undefined, q: q || undefined, upcoming: range === "upcoming" || range === "today" ? true : undefined, page, page_size: PAGE_SIZE });
   const [booking, setBooking] = useState(false);
   const [cancelling, setCancelling] = useState<Appointment | null>(null);
+  const [collecting, setCollecting] = useState<Appointment | null>(null);
   const [rescheduling, setRescheduling] = useState<Appointment | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const data = list.data;
@@ -141,7 +142,8 @@ function AppointmentsView() {
                   const next = NEXT_ACTION[a.status];
                   const allowed = next && can(next.permission);
                   const canNoShow = ["pending", "confirmed", "checked_in"].includes(a.status) && can("appointments.update_status");
-                  const hasMenu = a.can_cancel || a.can_reschedule || canNoShow;
+                  const canCollect = can("payments.collect") && !!a.patient_id && ["unpaid", "advance_paid"].includes(a.payment_status) && !["cancelled", "no_show"].includes(a.status) && Number(a.consultation_fee) > 0;
+                  const hasMenu = a.can_cancel || a.can_reschedule || canNoShow || canCollect;
                   return (
                     <TableRow key={a.id}>
                       <TableCell className="pl-4">
@@ -165,6 +167,7 @@ function AppointmentsView() {
                             <DropdownMenu>
                               <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={`More actions for ${a.patient_name}`} />}><MoreHorizontal /></DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
+                                {canCollect && <DropdownMenuItem onClick={() => setCollecting(a)}>Collect payment</DropdownMenuItem>}
                                 {a.can_reschedule && <DropdownMenuItem onClick={() => setRescheduling(a)}>Reschedule</DropdownMenuItem>}
                                 {canNoShow && <DropdownMenuItem onClick={() => move(a, "no_show")}>Mark no-show</DropdownMenuItem>}
                                 {a.can_cancel && <DropdownMenuItem variant="destructive" onClick={() => setCancelling(a)}>Cancel appointment</DropdownMenuItem>}
@@ -183,6 +186,7 @@ function AppointmentsView() {
         )}
       </Card>
       {booking && <BookDialog doctors={doctors.data?.items ?? []} onClose={() => setBooking(false)} onDone={() => { setBooking(false); list.reload(); }} />}
+      {collecting && <CollectDialog appointment={collecting} onClose={() => setCollecting(null)} onDone={() => { setCollecting(null); list.reload(); }} />}
       {cancelling && <CancelDialog appointment={cancelling} onClose={() => setCancelling(null)} onDone={() => { setCancelling(null); list.reload(); }} />}
       {rescheduling && <RescheduleDialog appointment={rescheduling} onClose={() => setRescheduling(null)} onDone={() => { setRescheduling(null); list.reload(); }} />}
     </div>
@@ -264,6 +268,62 @@ function BookDialog({ doctors, onClose, onDone }: { doctors: DoctorAdmin[]; onCl
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={busy}>Close</Button>
           <Button onClick={submit} disabled={busy || !patient || !slot}>{busy && <Loader2 className="animate-spin" aria-hidden />} Book</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function CollectDialog({ appointment, onClose, onDone }: { appointment: Appointment; onClose: () => void; onDone: () => void }) {
+  const fee = Number(appointment.consultation_fee);
+  const advance = appointment.payment_status === "advance_paid" ? Math.min(fee, Number(appointment.advance_amount)) : 0;
+  const due = Math.max(0, fee - advance);
+  const [method, setMethod] = useState("cash");
+  const [amount, setAmount] = useState(String(due));
+  const [reference, setReference] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api(`/appointments/${appointment.id}/collect-payment`, { method: "POST", body: { method, amount: Number(amount), reference_no: reference || null } });
+      toast.success("Payment recorded");
+      onDone();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not record the payment");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => !busy && !o && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Collect consultation fee</DialogTitle>
+          <DialogDescription>{appointment.patient_name} with {appointment.doctor_name}. Fee ₹{fee}{advance > 0 ? `, advance paid ₹${advance}` : ""}. Balance ₹{due}.</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3">
+          <div className="grid gap-1.5">
+            <Label htmlFor="pay-amount">Amount (₹)</Label>
+            <Input id="pay-amount" type="number" min={1} max={due} value={amount} onChange={(e) => setAmount(e.target.value)} />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="pay-method">Method</Label>
+            <NativeSelect id="pay-method" value={method} onChange={(e) => setMethod(e.target.value)}>
+              {["cash", "upi", "card", "cheque", "other"].map((m) => <option key={m} value={m}>{m.toUpperCase() === "UPI" ? "UPI" : m[0].toUpperCase() + m.slice(1)}</option>)}
+            </NativeSelect>
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="pay-ref">Reference <span className="font-normal text-muted-foreground">(optional)</span></Label>
+            <Input id="pay-ref" maxLength={100} value={reference} onChange={(e) => setReference(e.target.value)} />
+          </div>
+          {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={busy}>Close</Button>
+          <Button onClick={submit} disabled={busy || !(Number(amount) > 0)}>{busy && <Loader2 className="animate-spin" aria-hidden />}Record payment</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
