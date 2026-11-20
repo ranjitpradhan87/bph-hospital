@@ -280,7 +280,7 @@ class LabController extends Controller
     // ---------- payments ----------
 
     /** Record a payment against a bill and bring its status up to date. Caller supplies the transaction. */
-    private static function pay(int $billId, float $amount, string $method, ?string $reference, int $userId): int
+    public static function pay(int $billId, float $amount, string $method, ?string $reference, int $userId): int
     {
         $bill = DB::table('bills')->where('id', $billId)->lockForUpdate()->first();
         if ($bill->status === 'cancelled') {

@@ -2,6 +2,8 @@
 
 use App\Http\Controllers\Api\AppointmentController;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\BillingController;
+use App\Http\Controllers\Api\ReportController;
 use App\Http\Controllers\Api\ScheduleController;
 use App\Http\Controllers\Api\DepartmentController;
 use App\Http\Controllers\Api\DoctorController;
@@ -51,6 +53,19 @@ Route::middleware('auth')->group(function () {
         Route::get('/{user}', [UserController::class, 'show']);
         Route::put('/{user}/roles', [UserController::class, 'setRoles']);
         Route::patch('/{user}/status', [UserController::class, 'setStatus']);
+    });
+
+    // billing and reports
+    Route::prefix('billing')->group(function () {
+        Route::get('/bills', [BillingController::class, 'index'])->middleware('permission:billing.read');
+        Route::post('/bills', [BillingController::class, 'store'])->middleware('permission:billing.manage');
+        Route::get('/bills/{bill}', [BillingController::class, 'show'])->middleware('permission:billing.read')->whereNumber('bill');
+        Route::post('/bills/{bill}/payments', [BillingController::class, 'addPayment'])->middleware('permission:payments.collect')->whereNumber('bill');
+        Route::post('/bills/{bill}/cancel', [BillingController::class, 'cancel'])->middleware('permission:billing.manage')->whereNumber('bill');
+    });
+    Route::prefix('reports')->group(function () {
+        Route::get('/overview', [ReportController::class, 'overview'])->middleware('permission:reports.view');
+        Route::get('/collections/export', [ReportController::class, 'exportCollections'])->middleware('permission:reports.financial');
     });
 
     // testing lab

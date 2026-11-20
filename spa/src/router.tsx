@@ -7,6 +7,8 @@ import { buttonVariants } from "@/components/ui/button";
 import { AdminHome } from "@/app/admin/admin-home";
 import { IpdPage } from "@/app/admin/ipd/ipd-page";
 import { LabPage } from "@/app/admin/lab/lab-page";
+import { BillingPage } from "@/app/admin/billing/billing-page";
+import { ReportsPage } from "@/app/admin/reports/reports-page";
 import { AppointmentsPage } from "@/app/admin/appointments/appointments-page";
 import { SchedulesPage } from "@/app/admin/schedules/schedules-page";
 import { AttendancePage } from "@/app/admin/attendance/attendance-page";
@@ -88,6 +90,8 @@ export const router = createBrowserRouter([
       { path: "slots", element: <SchedulesPage /> },
       { path: "ipd", element: <IpdPage /> },
       { path: "lab", element: <LabPage /> },
+      { path: "billing", element: <BillingPage /> },
+      { path: "reports", element: <ReportsPage /> },
       { path: "attendance", element: <AttendancePage /> },
       { path: "departments", element: <DepartmentsPage /> },
       { path: "doctors", element: <DoctorsPage /> },

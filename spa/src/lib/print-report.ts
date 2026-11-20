@@ -1,5 +1,6 @@
 import { siteConfig } from "@/lib/config";
 import { formatDay } from "@/lib/public-format";
+import type { BillDetail } from "@/types/billing";
 import type { LabOrder, PortalLabOrder } from "@/types/lab";
 
 const esc = (s: string | number | null | undefined) =>
@@ -37,6 +38,20 @@ export function printReport(o: LabOrder | PortalLabOrder) {
   const rows = o.items.map((i) => `<tr><td>${esc(i.test_name)}</td><td class="${i.flag ? `flag-${i.flag}` : ""}">${esc(i.result_value)}${i.flag && i.flag !== "normal" ? ` (${esc(i.flag)})` : ""}</td><td>${esc(i.result_unit)}</td><td>${esc(i.reference_range)}</td></tr>${i.result_notes ? `<tr><td colspan="4" class="muted">${esc(i.result_notes)}</td></tr>` : ""}`).join("");
   return openPrint(`Lab report ${o.order_number}`, `${header(o)}<h2>Report</h2><table><thead><tr><th>Test</th><th>Result</th><th>Unit</th><th>Reference range</th></tr></thead><tbody>${rows}</tbody></table>
     <p class="foot">Reported ${when(o.completed_at)}. Please discuss these results with your doctor.</p>`);
+}
+
+/** A bill raised at the counter: items, totals and the receipts so far. */
+export function printInvoice(b: BillDetail) {
+  const rows = b.items.map((i) => `<tr><td>${esc(i.description)}</td><td class="r">${i.quantity}</td><td class="r">${inr(i.unit_price)}</td><td class="r">${inr(i.line_total)}</td></tr>`).join("");
+  const pays = b.payments.map((p) => `<tr><td>${esc(p.receipt_number)}</td><td>${when(p.paid_at)}</td><td>${esc(p.method)}${p.reference_no ? ` · ${esc(p.reference_no)}` : ""}</td><td class="r">${inr(p.amount)}</td></tr>`).join("");
+  return openPrint(`Bill ${b.bill_number}`, `<div class="head"><div><h1>${esc(siteConfig.name)}</h1><div class="muted">Bill</div></div>
+    <div style="text-align:right"><b>${esc(b.bill_number)}</b><br><span class="muted">${when(b.bill_date)}</span></div></div>
+    <p><b>${esc(b.patient_name)}</b> <span class="muted">${esc(b.patient_code)}</span></p>
+    <table><thead><tr><th>Item</th><th class="r">Qty</th><th class="r">Rate</th><th class="r">Amount</th></tr></thead><tbody>${rows}
+    <tr><td colspan="3" class="r">Subtotal</td><td class="r">${inr(b.subtotal)}</td></tr>${b.discount ? `<tr><td colspan="3" class="r">Discount</td><td class="r">- ${inr(b.discount)}</td></tr>` : ""}
+    <tr><td colspan="3" class="r"><b>Total</b></td><td class="r"><b>${inr(b.total)}</b></td></tr><tr><td colspan="3" class="r">Paid</td><td class="r">${inr(b.paid)}</td></tr>
+    <tr><td colspan="3" class="r"><b>Balance</b></td><td class="r"><b>${inr(b.balance)}</b></td></tr></tbody></table>
+    ${pays ? `<h2>Payments</h2><table><thead><tr><th>Receipt</th><th>Date</th><th>Method</th><th class="r">Amount</th></tr></thead><tbody>${pays}</tbody></table>` : ""}`);
 }
 
 /** The bill and receipts for an order. */
