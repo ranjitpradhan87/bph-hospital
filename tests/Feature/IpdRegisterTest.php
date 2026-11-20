@@ -36,7 +36,7 @@ class IpdRegisterTest extends HmsTestCase
         $this->actingAs($this->user('doctor'))->getJson(self::API.'/ipd/summary')->assertStatus(403);
         $this->actingAs($this->user('receptionist'))->getJson(self::API.'/ipd/admissions')->assertOk();
         $this->actingAs($this->user('accountant'))->getJson(self::API.'/ipd/summary')->assertOk();
-        $this->actingAs($this->root())->getJson(self::API.'/ipd/heads')->assertOk()->assertJsonCount(12);
+        $this->actingAs($this->root())->getJson(self::API.'/ipd/heads')->assertOk()->assertJsonCount(13);
     }
 
     public function test_anaesthetist_is_stored_and_balance_is_received_minus_paid_out(): void
@@ -238,7 +238,7 @@ class IpdRegisterTest extends HmsTestCase
         $this->assertEquals(23000, $cash['total']);
         $this->assertSame(2, $cash['entries']);
         $this->assertEquals(19000, collect($s['daily'])->firstWhere('date', '2026-11-06')['received']);
-        $this->assertCount(12, $s['heads']);
+        $this->assertCount(13, $s['heads']);
     }
 
     public function test_deleting_an_admission_hides_it_but_keeps_entries_and_is_audited_without_names(): void

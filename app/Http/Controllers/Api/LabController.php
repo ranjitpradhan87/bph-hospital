@@ -11,6 +11,7 @@ use App\Support\Phone;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
 /** The testing lab: test catalogue, orders for a patient, results, and payment through the shared bills. */
@@ -115,7 +116,8 @@ class LabController extends Controller
     {
         return DB::table('lab_orders as o')->join('patients as p', 'p.id', '=', 'o.patient_id')->leftJoin('bills as b', 'b.id', '=', 'o.bill_id')
             ->leftJoin('doctors as dr', 'dr.id', '=', 'o.doctor_id')->leftJoin('users as du', 'du.id', '=', 'dr.user_id')
-            ->select('o.*', 'p.patient_code', 'p.full_name as patient_name', 'p.mobile as patient_mobile', 'du.full_name as doctor_name',
+            ->leftJoin('ipd_admissions as ad', 'ad.id', '=', 'o.admission_id')
+            ->select('o.*', 'ad.bed as ipd_bed', 'p.patient_code', 'p.full_name as patient_name', 'p.mobile as patient_mobile', 'du.full_name as doctor_name',
                 'b.bill_number', 'b.subtotal', 'b.discount_amount', 'b.total_amount', 'b.paid_amount', 'b.status as bill_status');
     }
 
@@ -129,7 +131,7 @@ class LabController extends Controller
     {
         return ['id' => $o->id, 'order_number' => $o->order_number, 'status' => $o->status, 'created_at' => self::iso($o->created_at), 'patient_id' => $o->patient_id,
             'patient_code' => $o->patient_code, 'patient_name' => $o->patient_name, 'doctor_id' => $o->doctor_id, 'doctor_name' => $o->doctor_name,
-            'tests' => $o->tests ?? null, 'bill' => self::billOut($o)];
+            'tests' => $o->tests ?? null, 'bill' => self::billOut($o), 'admission_id' => $o->admission_id, 'ipd_bed' => $o->ipd_bed];
     }
 
     private static function fullOut(int $id): array
@@ -142,7 +144,7 @@ class LabController extends Controller
             ->get(['pm.id', 'pm.receipt_number', 'pm.amount', 'pm.method', 'pm.reference_no', 'pm.paid_at', 'u.full_name as by'])
             ->map(fn ($p) => ['id' => $p->id, 'receipt_number' => $p->receipt_number, 'amount' => self::money($p->amount), 'method' => $p->method, 'reference_no' => $p->reference_no, 'paid_at' => self::iso($p->paid_at), 'received_by' => $p->by])->values() : [];
 
-        return self::rowOut($o) + ['patient_mobile' => $o->patient_mobile, 'admission_id' => $o->admission_id, 'notes' => $o->notes, 'sample_collected_at' => self::iso($o->sample_collected_at),
+        return self::rowOut($o) + ['patient_mobile' => $o->patient_mobile, 'notes' => $o->notes, 'sample_collected_at' => self::iso($o->sample_collected_at),
             'completed_at' => self::iso($o->completed_at), 'cancel_reason' => $o->cancel_reason, 'items' => $items, 'payments' => $payments];
     }
 
@@ -151,7 +153,7 @@ class LabController extends Controller
     public function orders(Request $request): JsonResponse
     {
         $request->validate(['status' => ['nullable', Rule::in(self::STATUSES)], 'q' => 'nullable|string|max:100', 'from' => 'nullable|date_format:Y-m-d', 'to' => 'nullable|date_format:Y-m-d',
-            'patient_id' => 'nullable|integer', 'unpaid' => 'nullable|in:0,1,true,false']);
+            'patient_id' => 'nullable|integer', 'unpaid' => 'nullable|in:0,1,true,false', 'visit' => ['nullable', Rule::in(['ipd', 'walk_in'])]]);
         $q = self::baseOrders()->selectRaw('(select group_concat(i.test_name order by i.id separator \', \') from lab_order_items i where i.order_id = o.id) as tests');
         if (($own = self::ownDoctorScope($request)) !== null) {
             $q->where('o.doctor_id', $own);
@@ -161,6 +163,9 @@ class LabController extends Controller
         }
         if ($pid = $request->query('patient_id')) {
             $q->where('o.patient_id', (int) $pid);
+        }
+        if ($visit = $request->query('visit')) { // in-patients (charged to an admission) or lab-only walk-ins
+            $visit === 'ipd' ? $q->whereNotNull('o.admission_id') : $q->whereNull('o.admission_id');
         }
         if ($from = $request->query('from')) {
             $q->whereDate('o.created_at', '>=', $from);
@@ -197,7 +202,7 @@ class LabController extends Controller
         $request->merge(['patient_mobile' => $request->filled('patient_mobile') ? Phone::normalize((string) $request->input('patient_mobile')) : null]);
         $d = $request->validate([
             'patient_id' => ['nullable', 'integer'], 'patient_name' => ['nullable', 'string', 'min:2', 'max:150'], 'patient_mobile' => ['nullable', 'regex:/^[6-9]\d{9}$/'],
-            'doctor_id' => ['nullable', 'integer'], 'admission_id' => ['nullable', 'integer'], 'notes' => ['nullable', 'string', 'max:1000'],
+            'doctor_id' => ['nullable', 'integer'], 'bill_to_admission' => ['nullable', 'boolean'], 'notes' => ['nullable', 'string', 'max:1000'],
             'test_ids' => ['required', 'array', 'min:1', 'max:40'], 'test_ids.*' => ['integer', 'distinct'],
             'discount' => ['nullable', 'numeric', 'min:0', 'max:10000000'],
             'payment' => ['nullable', 'array'], 'payment.amount' => ['required_with:payment', 'numeric', 'gt:0'], 'payment.method' => ['required_with:payment', Rule::in(self::METHODS)], 'payment.reference_no' => ['nullable', 'string', 'max:100'],
@@ -206,7 +211,6 @@ class LabController extends Controller
         $tests = DB::table('lab_tests')->whereIn('id', $d['test_ids'])->where('is_active', true)->get()->keyBy('id');
         count($tests) === count($d['test_ids']) || abort(422, 'One of the chosen tests is not available');
         ($d['doctor_id'] ?? null) === null || DB::table('doctors')->where('id', $d['doctor_id'])->whereNull('deleted_at')->exists() || abort(400, 'Unknown doctor');
-        ($d['admission_id'] ?? null) === null || DB::table('ipd_admissions')->where('id', $d['admission_id'])->whereNull('deleted_at')->exists() || abort(400, 'Unknown admission');
         $subtotal = self::money($tests->sum('price'));
         $discount = self::money($d['discount'] ?? 0);
         $discount <= $subtotal || abort(422, 'The discount cannot be more than the total');
@@ -227,16 +231,23 @@ class LabController extends Controller
                 Audit::record('create', 'patient', $patientId, ['via' => 'lab_order']);
             }
 
+            // An admitted patient's tests are charged to their stay; a lab-only visitor has no admission.
+            $admissionId = ($d['bill_to_admission'] ?? true) ? DB::table('ipd_admissions')->where('patient_id', $patientId)->where('status', 'admitted')->whereNull('deleted_at')->orderByDesc('id')->value('id') : null;
+
             $billId = DB::table('bills')->insertGetId(['bill_number' => 'TMP-'.bin2hex(random_bytes(6)), 'patient_id' => $patientId, 'bill_date' => Hospital::today(), 'subtotal' => $subtotal,
                 'discount_amount' => $discount, 'total_amount' => $total, 'paid_amount' => 0, 'status' => $total > 0 ? 'pending' : 'paid', 'created_by_user_id' => $request->user()->id, 'created_at' => now(), 'updated_at' => now()]);
             DB::table('bills')->where('id', $billId)->update(['bill_number' => sprintf('BILL-%s-%05d', date('ymd'), $billId)]);
-            $orderId = DB::table('lab_orders')->insertGetId(['order_number' => 'TMP-'.bin2hex(random_bytes(6)), 'patient_id' => $patientId, 'doctor_id' => $d['doctor_id'] ?? null, 'admission_id' => $d['admission_id'] ?? null,
+            $orderId = DB::table('lab_orders')->insertGetId(['order_number' => 'TMP-'.bin2hex(random_bytes(6)), 'patient_id' => $patientId, 'doctor_id' => $d['doctor_id'] ?? null, 'admission_id' => $admissionId,
                 'bill_id' => $billId, 'status' => 'ordered', 'notes' => $d['notes'] ?? null, 'created_by_user_id' => $request->user()->id, 'created_at' => now(), 'updated_at' => now()]);
             DB::table('lab_orders')->where('id', $orderId)->update(['order_number' => sprintf('LAB-%s-%05d', date('ymd'), $orderId)]);
             foreach ($d['test_ids'] as $tid) {
                 $t = $tests[$tid];
                 DB::table('lab_order_items')->insert(['order_id' => $orderId, 'test_id' => $t->id, 'test_name' => $t->name, 'price' => $t->price, 'result_unit' => $t->unit, 'reference_range' => $t->reference_range, 'created_at' => now(), 'updated_at' => now()]);
                 DB::table('bill_items')->insert(['bill_id' => $billId, 'item_type' => 'lab_test', 'description' => $t->name, 'quantity' => 1, 'unit_price' => $t->price, 'line_total' => $t->price, 'created_at' => now(), 'updated_at' => now()]);
+            }
+            if ($admissionId && $total > 0) {
+                DB::table('ipd_entries')->insert(['admission_id' => $admissionId, 'lab_order_id' => $orderId, 'head_id' => self::labHeadId(), 'entry_date' => Hospital::today(), 'amount' => $total,
+                    'note' => 'Lab '.sprintf('LAB-%s-%05d', date('ymd'), $orderId).': '.Str::limit($tests->pluck('name')->implode(', '), 150), 'created_by_user_id' => $request->user()->id, 'created_at' => now(), 'updated_at' => now()]);
             }
             if (! empty($d['payment'])) {
                 self::pay($billId, (float) $d['payment']['amount'], $d['payment']['method'], $d['payment']['reference_no'] ?? null, $request->user()->id);
@@ -247,6 +258,23 @@ class LabController extends Controller
         });
 
         return response()->json(self::fullOut($id), 201);
+    }
+
+    /** The IPD register column that lab charges go to (created on first use if it was removed). */
+    private static function labHeadId(): int
+    {
+        $id = DB::table('ipd_heads')->where('code', 'lab')->value('id');
+
+        return $id ?: DB::table('ipd_heads')->insertGetId(['code' => 'lab', 'name' => 'Lab tests', 'type' => 'charge', 'display_order' => 1 + (int) DB::table('ipd_heads')->max('display_order'),
+            'is_active' => true, 'created_at' => now(), 'updated_at' => now()]);
+    }
+
+    /** Is this patient in hospital right now? The new-order screen uses it to say the tests go to the IPD register. */
+    public function admissionFor(int $patient): JsonResponse
+    {
+        $a = DB::table('ipd_admissions')->where('patient_id', $patient)->where('status', 'admitted')->whereNull('deleted_at')->orderByDesc('id')->first(['id', 'bed', 'case_title']);
+
+        return response()->json(['admission' => $a ? ['id' => $a->id, 'bed' => $a->bed, 'case_title' => $a->case_title] : null]);
     }
 
     // ---------- payments ----------
@@ -341,6 +369,7 @@ class LabController extends Controller
                 DB::table('payments')->where('id', $id)->update(['receipt_number' => sprintf('RCT-%s-%05d', date('ymd'), $id)]);
             }
             DB::table('bills')->where('id', $bill->id)->update(['paid_amount' => 0, 'status' => 'cancelled', 'cancelled_at' => now(), 'cancel_reason' => $d['reason'], 'updated_at' => now()]);
+            DB::table('ipd_entries')->where('lab_order_id', $order)->delete(); // the charge leaves the IPD register with the order
             DB::table('lab_orders')->where('id', $order)->update(['status' => 'cancelled', 'cancelled_at' => now(), 'cancel_reason' => $d['reason'], 'updated_at' => now()]);
             Audit::record('cancel', 'lab_order', $order, ['reason' => $d['reason'], 'refunded' => $refund]);
         });

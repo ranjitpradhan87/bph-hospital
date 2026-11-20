@@ -503,7 +503,8 @@ function CaseDialog({ id, heads, manage, onClose }: { id: number; heads: IpdHead
                     <li key={e.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
                       <span><b>{headName(e.head_id)}</b> <span className="text-muted-foreground">· {formatDay(e.entry_date, { day: "numeric", month: "short" })}{e.payment_mode ? ` · ${PAYMENT_MODES.find((m) => m.value === e.payment_mode)?.label}` : ""}{e.receipt_no ? ` · Receipt ${e.receipt_no}` : ""}{e.note ? ` · ${e.note}` : ""}</span></span>
                       <span className="flex items-center gap-1"><span className="font-medium tabular-nums">{inr.format(e.amount)}</span>
-                        {manage && <Button size="icon-sm" variant="ghost" aria-label="Delete entry" onClick={() => del(e.id)}><Trash2 /></Button>}</span>
+                        {manage && (e.lab_order_id ? <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground" title="Cancel the lab order to remove this charge">From Lab</span>
+                          : <Button size="icon-sm" variant="ghost" aria-label="Delete entry" onClick={() => del(e.id)}><Trash2 /></Button>)}</span>
                     </li>
                   ))}
                 </ul>

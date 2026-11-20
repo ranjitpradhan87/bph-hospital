@@ -28,6 +28,7 @@ class IpdController extends Controller
         ['doctor_fee', 'Doctor fee', 'payout'], ['anaesthesia', 'Anaesthesia', 'payout'], ['extra_expenses', 'Extra expenses', 'payout'],
         ['card', 'Card', 'receipt'], ['implant', 'Implant', 'charge'], ['extra_payment', 'Extra payment', 'charge'],
         ['xray', 'X-ray', 'charge'], ['usg', 'USG', 'charge'], ['ecg', 'ECG', 'charge'],
+        ['lab', 'Lab tests', 'charge'], // filled in automatically when the lab tests an admitted patient
     ];
 
     private static function money(mixed $v): float
@@ -98,7 +99,7 @@ class IpdController extends Controller
 
     private static function entryOut(object $e): array
     {
-        return ['id' => $e->id, 'head_id' => $e->head_id, 'entry_date' => $e->entry_date, 'amount' => self::money($e->amount), 'payment_mode' => $e->payment_mode, 'receipt_no' => $e->receipt_no, 'note' => $e->note];
+        return ['id' => $e->id, 'head_id' => $e->head_id, 'entry_date' => $e->entry_date, 'amount' => self::money($e->amount), 'payment_mode' => $e->payment_mode, 'receipt_no' => $e->receipt_no, 'note' => $e->note, 'lab_order_id' => $e->lab_order_id];
     }
 
     /** @param \Illuminate\Support\Collection $rows @return list<array<string, mixed>> */
@@ -395,6 +396,7 @@ class IpdController extends Controller
     public function updateEntry(Request $request, int $entry): JsonResponse
     {
         $row = DB::table('ipd_entries')->find($entry) ?? abort(404, 'Entry not found');
+        $row->lab_order_id === null || abort(409, 'This charge comes from a lab order. Change or cancel it in the Lab section.');
         $d = $request->validate(self::entryRules());
         self::checkHead($d['head_id']);
         DB::table('ipd_entries')->where('id', $entry)->update(['head_id' => $d['head_id'], 'entry_date' => $d['entry_date'], 'amount' => $d['amount'], 'payment_mode' => self::paymentMode($d), 'receipt_no' => $d['receipt_no'] ?? null, 'note' => $d['note'] ?? null, 'updated_at' => now()]);
@@ -406,6 +408,7 @@ class IpdController extends Controller
     public function deleteEntry(int $entry): JsonResponse
     {
         $row = DB::table('ipd_entries')->find($entry) ?? abort(404, 'Entry not found');
+        $row->lab_order_id === null || abort(409, 'This charge comes from a lab order. Cancel the lab order to remove it.');
         DB::table('ipd_entries')->where('id', $entry)->delete();
         Audit::record('delete', 'ipd_entry', $entry, ['admission_id' => $row->admission_id, 'head_id' => $row->head_id, 'amount' => self::money($row->amount), 'date' => $row->entry_date]);
 

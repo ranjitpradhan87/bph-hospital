@@ -56,6 +56,7 @@ Route::middleware('auth')->group(function () {
     // testing lab
     Route::prefix('lab')->group(function () {
         Route::get('/lookups', [LabController::class, 'lookups'])->middleware('permission:lab.read');
+        Route::get('/admission-for/{patient}', [LabController::class, 'admissionFor'])->middleware('permission:lab.read')->whereNumber('patient');
         Route::get('/tests', [LabController::class, 'tests'])->middleware('permission:lab.read');
         Route::post('/tests', [LabController::class, 'storeTest'])->middleware('permission:lab.catalogue');
         Route::put('/tests/{test}', [LabController::class, 'updateTest'])->middleware('permission:lab.catalogue')->whereNumber('test');

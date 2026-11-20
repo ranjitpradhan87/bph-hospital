@@ -38,6 +38,8 @@ export interface IpdEntry {
   payment_mode: PaymentMode | null;
   receipt_no: string | null;
   note: string | null;
+  /** Posted by the lab; changed or removed from the lab order, not here. */
+  lab_order_id?: number | null;
 }
 
 export interface IpdAdmission {

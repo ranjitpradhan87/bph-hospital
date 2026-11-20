@@ -50,6 +50,9 @@ export interface LabOrderRow {
   doctor_name: string | null;
   tests: string | null;
   bill: LabBill;
+  /** Set when the patient was admitted at the time: the cost is on their IPD register. */
+  admission_id: number | null;
+  ipd_bed: string | null;
 }
 
 export interface LabItem {

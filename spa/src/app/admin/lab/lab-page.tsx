@@ -84,10 +84,11 @@ function OrdersTab() {
   const q = useDeferredValue(search.trim());
   const [status, setStatus] = useState("");
   const [unpaid, setUnpaid] = useState(false);
+  const [visit, setVisit] = useState("");
   const [page, setPage] = useState(1);
   const [creating, setCreating] = useState(false);
   const [open, setOpen] = useState<number | null>(null);
-  const list = useApi<Page<LabOrderRow>>("/lab/orders", { q: q || undefined, status: status || undefined, unpaid: unpaid ? 1 : undefined, page, page_size: PAGE_SIZE });
+  const list = useApi<Page<LabOrderRow>>("/lab/orders", { q: q || undefined, status: status || undefined, visit: visit || undefined, unpaid: unpaid ? 1 : undefined, page, page_size: PAGE_SIZE });
   const reset = () => setPage(1);
 
   return (
@@ -103,6 +104,11 @@ function OrdersTab() {
           <NativeSelect aria-label="Status" value={status} onChange={(e) => { setStatus(e.target.value); reset(); }} className="sm:w-48">
             <option value="">All statuses</option>
             {(Object.keys(LAB_STATUS_LABEL) as LabStatus[]).map((s) => <option key={s} value={s}>{LAB_STATUS_LABEL[s]}</option>)}
+          </NativeSelect>
+          <NativeSelect aria-label="Visit type" value={visit} onChange={(e) => { setVisit(e.target.value); reset(); }} className="sm:w-44">
+            <option value="">All patients</option>
+            <option value="ipd">In-patients (IPD)</option>
+            <option value="walk_in">Lab only</option>
           </NativeSelect>
           <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
             <input type="checkbox" className="size-4 accent-primary" checked={unpaid} onChange={(e) => { setUnpaid(e.target.checked); reset(); }} /> Unpaid only
@@ -127,7 +133,7 @@ function OrdersTab() {
                 {list.data.items.map((o) => (
                   <TableRow key={o.id} className="cursor-pointer" onClick={() => setOpen(o.id)}>
                     <TableCell className="pl-4"><span className="font-mono text-xs font-semibold text-primary">{o.order_number}</span><span className="block text-xs text-muted-foreground">{dateOf(o.created_at)}</span></TableCell>
-                    <TableCell>{o.patient_name}<span className="block font-mono text-xs text-muted-foreground">{o.patient_code}</span></TableCell>
+                    <TableCell>{o.patient_name}<span className="block text-xs text-muted-foreground"><span className="font-mono">{o.patient_code}</span> · {o.admission_id ? <span className="font-medium text-primary">IPD{o.ipd_bed ? ` · Bed ${o.ipd_bed}` : ""}</span> : "Lab only"}</span></TableCell>
                     <TableCell className="hidden max-w-64 truncate text-xs text-muted-foreground md:table-cell" title={o.tests ?? ""}>{o.tests}</TableCell>
                     <TableCell><LabStatusBadge status={o.status} /></TableCell>
                     <TableCell className="pr-4 text-right tabular-nums">{inr.format(o.bill.total)}<span className="block text-xs"><BalanceText order={o} /></span></TableCell>
@@ -166,6 +172,10 @@ function NewOrderDialog({ onClose, onCreated, patient }: { onClose: () => void; 
   const [ref, setRef] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Is the chosen patient in hospital now? Their tests then go to the IPD register unless staff say otherwise.
+  const stay = useApi<{ admission: { id: number; bed: string | null; case_title: string | null } | null }>(linked ? `/lab/admission-for/${linked.id}` : null);
+  const [toIpd, setToIpd] = useState(true);
+  const admitted = stay.data?.admission ?? null;
 
   const tests = lookups.data?.tests ?? [];
   const visible = useMemo(() => tests.filter((t) => !filter.trim() || `${t.name} ${t.category}`.toLowerCase().includes(filter.trim().toLowerCase())), [tests, filter]);
@@ -186,7 +196,7 @@ function NewOrderDialog({ onClose, onCreated, patient }: { onClose: () => void; 
     try {
       const body = {
         patient_id: linked?.id ?? null, patient_name: linked ? null : name.trim(), patient_mobile: linked ? null : mobile || null, doctor_id: doctorId ? Number(doctorId) : null,
-        test_ids: picked, discount: disc || null, notes: notes || null, payment: paying > 0 ? { amount: paying, method, reference_no: ref || null } : null,
+        bill_to_admission: admitted ? toIpd : null, test_ids: picked, discount: disc || null, notes: notes || null, payment: paying > 0 ? { amount: paying, method, reference_no: ref || null } : null,
       };
       const o = await api<LabOrder>("/lab/orders", { method: "POST", body });
       toast.success(`Order ${o.order_number} created`);
@@ -209,7 +219,15 @@ function NewOrderDialog({ onClose, onCreated, patient }: { onClose: () => void; 
                 <span><b>{linked.name}</b> {linked.code && <span className="font-mono text-xs text-muted-foreground">{linked.code}</span>}</span>
                 {!patient && <Button size="sm" variant="ghost" onClick={() => setLinked(null)}>Choose another</Button>}
               </div>
-            ) : (
+            ) : null}
+            {linked && admitted && (
+              <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-primary/30 bg-primary/5 p-2 text-sm">
+                <input type="checkbox" className="mt-0.5 size-4 accent-primary" checked={toIpd} onChange={(e) => setToIpd(e.target.checked)} />
+                <span><b>Admitted{admitted.bed ? ` · Bed ${admitted.bed}` : ""}.</b> Add the cost of these tests to their IPD register.
+                  <span className="block text-xs text-muted-foreground">Untick if they are being tested as an outpatient.</span></span>
+              </label>
+            )}
+            {linked ? null : (
               <>
                 {can("patients.read") && <Input id="lo-patient" placeholder="Search registered patients by name, ID or mobile" value={term} onChange={(e) => setTerm(e.target.value)} autoComplete="off" />}
                 {found.data && found.data.items.length > 0 && (
@@ -220,7 +238,7 @@ function NewOrderDialog({ onClose, onCreated, patient }: { onClose: () => void; 
                     ))}
                   </ul>
                 )}
-                <p className="text-xs text-muted-foreground">Not registered? Enter their name and they are registered as a new patient.</p>
+                <p className="text-xs text-muted-foreground">Coming for tests only and not registered? Enter their name and mobile. They are registered as a patient and the order is marked “Lab only”.</p>
                 <div className="grid gap-2 sm:grid-cols-2">
                   <Input aria-label="New patient's name" placeholder="Full name" maxLength={150} value={name} onChange={(e) => setName(e.target.value)} />
                   <Input aria-label="New patient's mobile" type="tel" inputMode="numeric" placeholder="Mobile (optional)" maxLength={14} value={mobile} onChange={(e) => setMobile(e.target.value.replace(/\D/g, "").slice(-10))} />

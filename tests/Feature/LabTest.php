@@ -170,4 +170,65 @@ class LabTest extends HmsTestCase
         $this->patientRow(['user_id' => $other->id, 'mobile' => '9123456781', 'email' => 'q@example.com']);
         $this->actingAs($other)->getJson(self::API.'/portal/lab-orders')->assertOk()->assertJsonCount(0);
     }
+
+    private function admitted(): array
+    {
+        $a = $this->actingAs($this->user('receptionist'))->postJson(self::API.'/ipd/admissions', ['admission_date' => '2026-11-01', 'patient_name' => 'Ward Patient', 'bed' => 'G-1', 'case_title' => 'LSCS'])
+            ->assertCreated()->json();
+
+        return $a;
+    }
+
+    public function test_tests_for_an_admitted_patient_post_to_the_ipd_register(): void
+    {
+        $a = $this->admitted();
+        $o = $this->actingAs($this->user('receptionist'))->postJson(self::API.'/lab/orders', ['patient_id' => $a['patient_id'], 'discount' => 100,
+            'test_ids' => [$this->testId('Haemoglobin'), $this->testId('Lipid profile')]])->assertCreated()->assertJsonPath('admission_id', $a['id'])->assertJsonPath('ipd_bed', 'G-1')->json();
+
+        $entry = DB::table('ipd_entries')->where('lab_order_id', $o['id'])->first();
+        $this->assertSame('lab', DB::table('ipd_heads')->where('id', $entry->head_id)->value('code'));
+        $this->assertSame($a['id'], (int) $entry->admission_id);
+        $this->assertEquals(600, $entry->amount); // after the discount
+        $this->assertSame(1, DB::table('ipd_entries')->where('admission_id', $a['id'])->count());
+        $this->actingAs($this->user('receptionist'))->getJson(self::API."/ipd/admissions/{$a['id']}")->assertOk()->assertJsonPath('entries.0.lab_order_id', $o['id'])->assertJsonPath('charges', 600);
+
+        // staff cannot edit or delete a charge that belongs to a lab order
+        $this->actingAs($this->user('accountant'))->deleteJson(self::API."/ipd/entries/{$entry->id}")->assertStatus(409);
+        $this->actingAs($this->user('accountant'))->putJson(self::API."/ipd/entries/{$entry->id}", ['head_id' => $entry->head_id, 'entry_date' => '2026-11-02', 'amount' => 1])->assertStatus(409);
+
+        // cancelling the order takes it back out
+        $this->actingAs($this->user('receptionist'))->postJson(self::API."/lab/orders/{$o['id']}/cancel", ['reason' => 'Ordered by mistake'])->assertOk();
+        $this->assertSame(0, DB::table('ipd_entries')->where('admission_id', $a['id'])->count());
+    }
+
+    public function test_a_lab_only_visitor_is_not_in_the_ipd_register(): void
+    {
+        $walkIn = $this->actingAs($this->user('receptionist'))->postJson(self::API.'/lab/orders', ['patient_name' => 'Walk In', 'patient_mobile' => '9876543210', 'test_ids' => [$this->testId('Haemoglobin')]])
+            ->assertCreated()->assertJsonPath('admission_id', null)->json();
+        $this->assertSame(0, DB::table('ipd_entries')->count());
+
+        // an admitted patient can still be tested as an outpatient on request
+        $a = $this->admitted();
+        $this->actingAs($this->user('receptionist'))->postJson(self::API.'/lab/orders', ['patient_id' => $a['patient_id'], 'bill_to_admission' => false, 'test_ids' => [$this->testId('Haemoglobin')]])
+            ->assertCreated()->assertJsonPath('admission_id', null);
+        $this->assertSame(0, DB::table('ipd_entries')->count());
+
+        // a discharged patient is a lab-only visitor again
+        $this->actingAs($this->user('receptionist'))->putJson(self::API."/ipd/admissions/{$a['id']}", ['status' => 'discharged', 'discharge_date' => '2026-11-05'] + $this->actingAs($this->user('receptionist'))->getJson(self::API."/ipd/admissions/{$a['id']}")->json())->assertOk();
+        $this->actingAs($this->user('receptionist'))->postJson(self::API.'/lab/orders', ['patient_id' => $a['patient_id'], 'test_ids' => [$this->testId('Haemoglobin')]])->assertCreated()->assertJsonPath('admission_id', null);
+
+        // the lab list can be split into in-patients and lab-only visits
+        $this->actingAs($this->user('receptionist'))->getJson(self::API.'/lab/orders?visit=walk_in')->assertOk()->assertJsonPath('total', 3);
+        $this->actingAs($this->user('receptionist'))->getJson(self::API.'/lab/orders?visit=ipd')->assertOk()->assertJsonPath('total', 0);
+        $this->assertSame($walkIn['id'], $this->actingAs($this->user('receptionist'))->getJson(self::API.'/lab/orders?q=Walk')->json('items.0.id'));
+    }
+
+    public function test_the_order_screen_can_ask_whether_a_patient_is_admitted(): void
+    {
+        $a = $this->admitted();
+        $this->actingAs($this->user('receptionist'))->getJson(self::API."/lab/admission-for/{$a['patient_id']}")->assertOk()->assertJsonPath('admission.bed', 'G-1');
+        $other = $this->patientRow(['full_name' => 'Not Admitted']);
+        $this->actingAs($this->user('receptionist'))->getJson(self::API."/lab/admission-for/$other")->assertOk()->assertJsonPath('admission', null);
+        $this->actingAs($this->user('nurse'))->getJson(self::API."/lab/admission-for/$other")->assertStatus(403);
+    }
 }
