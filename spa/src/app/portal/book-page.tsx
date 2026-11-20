@@ -1,4 +1,4 @@
-import { ArrowLeft, CalendarCheck, CircleCheck, Loader2, MessageSquareText, CreditCard } from "lucide-react";
+import { ArrowLeft, CalendarCheck, CircleCheck, Loader2, MessageSquareText, CreditCard, Smartphone } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
@@ -227,7 +227,7 @@ function BookingDialog({ guest, slotId, summary, fee, advanceAmount, reason, acc
     const Razorpay = (window as unknown as { Razorpay: new (o: Record<string, unknown>) => { open: () => void } }).Razorpay;
     new Razorpay({
       key: p.key_id, order_id: p.order_id, amount: p.amount, currency: p.currency, name: p.name, description: `Advance for appointment ${p.appointment_number}`,
-      prefill: { name: p.prefill.name ?? undefined, contact: p.prefill.contact ?? undefined }, theme: { color: "#0b66c3" },
+      prefill: { name: p.prefill.name ?? undefined, contact: p.prefill.contact ?? undefined }, theme: { color: "#0b66c3" }, method: { upi: true, card: false, netbanking: false, wallet: false, emi: false, paylater: false },
       handler: (r: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) => verify(r.razorpay_order_id, r.razorpay_payment_id, r.razorpay_signature),
     }).open();
   }
@@ -267,7 +267,7 @@ function BookingDialog({ guest, slotId, summary, fee, advanceAmount, reason, acc
     <Dialog open onOpenChange={(o) => !busy && !o && onClose(false)}>
       <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{pay ? "Pay the advance to confirm" : guest ? "Your mobile number" : "Confirm your booking"}</DialogTitle>
+          <DialogTitle>{pay ? "Pay the advance by UPI to confirm" : guest ? "Your mobile number" : "Confirm your booking"}</DialogTitle>
           <DialogDescription>{summary}</DialogDescription>
         </DialogHeader>
 
@@ -277,13 +277,13 @@ function BookingDialog({ guest, slotId, summary, fee, advanceAmount, reason, acc
             {pay.driver === "simulate" && (
               <div className="grid gap-2 rounded-lg border border-dashed p-3 text-sm">
                 <p><b>Test mode</b> — no real payment gateway is connected, so no money is charged.</p>
-                <Button disabled={busy} onClick={() => verify(pay.order_id, "sim_payment", pay.sim_signature ?? "")}>{busy && <Loader2 className="animate-spin" aria-hidden />} Simulate payment of {rupees(pay.amount / 100)}</Button>
+                <Button disabled={busy} onClick={() => verify(pay.order_id, "sim_payment", pay.sim_signature ?? "")}>{busy && <Loader2 className="animate-spin" aria-hidden />} Simulate UPI payment of {rupees(pay.amount / 100)}</Button>
               </div>
             )}
             {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
             <DialogFooter>
               <Button variant="outline" onClick={() => onClose(false)} disabled={busy}>Close</Button>
-              {pay.driver === "razorpay" && <Button onClick={() => openPayment(pay)} disabled={busy}><CreditCard aria-hidden /> Pay {rupees(pay.amount / 100)}</Button>}
+              {pay.driver === "razorpay" && <Button onClick={() => openPayment(pay)} disabled={busy}><Smartphone aria-hidden /> Pay {rupees(pay.amount / 100)} by UPI</Button>}
             </DialogFooter>
           </div>
         ) : (
@@ -293,7 +293,7 @@ function BookingDialog({ guest, slotId, summary, fee, advanceAmount, reason, acc
                 <>
                   <div className="grid gap-1.5"><Label htmlFor="bd-mobile">Mobile number</Label>
                     <Input id="bd-mobile" type="tel" inputMode="numeric" autoComplete="tel-national" placeholder="10-digit mobile" maxLength={14} value={f.mobile} onChange={(e) => set("mobile", e.target.value)} autoFocus />
-                    <p className="text-xs text-muted-foreground">We text your confirmation here. Our staff will complete your details, then text you a link to set a password for your next visit.</p></div>
+                    <p className="text-xs text-muted-foreground">You are registered as a patient once your payment succeeds, and we text your confirmation here. Our staff will complete your details, then text you a link to set a password for your next visit.</p></div>
                   <div className="grid gap-1.5"><Label htmlFor="bd-name">Full name</Label><Input id="bd-name" autoComplete="name" maxLength={150} value={f.full_name} onChange={(e) => set("full_name", e.target.value)} /></div>
                 </>
               ) : (
@@ -305,7 +305,7 @@ function BookingDialog({ guest, slotId, summary, fee, advanceAmount, reason, acc
                 <p className="flex items-center gap-2 font-medium"><CreditCard className="size-4" aria-hidden /> {advance > 0 ? <>Advance payment {rupees(advance)}</> : "No advance payment needed"}</p>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {advance > 0
-                    ? <>Paid online to confirm your time. Consultation fee {formatFee(fee)}{feeNum > advance && <> — the balance of {rupees(feeNum - advance)} is paid at the hospital</>}.</>
+                    ? <>Paid by UPI to confirm your time. Consultation fee {formatFee(fee)}{feeNum > advance && <> — the balance of {rupees(feeNum - advance)} is paid at the hospital</>}.</>
                     : <>Your appointment is confirmed straight away. Consultation fee {formatFee(fee)} is paid at the hospital.</>}
                 </p>
               </div>
@@ -350,7 +350,7 @@ export function PayHeldBooking({ appointment, onClose }: { appointment: Appointm
     const Razorpay = (window as unknown as { Razorpay: new (o: Record<string, unknown>) => { open: () => void } }).Razorpay;
     new Razorpay({
       key: p.key_id, order_id: p.order_id, amount: p.amount, currency: p.currency, name: p.name, description: `Advance for appointment ${p.appointment_number}`,
-      prefill: { name: p.prefill.name ?? undefined, contact: p.prefill.contact ?? undefined }, theme: { color: "#0b66c3" },
+      prefill: { name: p.prefill.name ?? undefined, contact: p.prefill.contact ?? undefined }, theme: { color: "#0b66c3" }, method: { upi: true, card: false, netbanking: false, wallet: false, emi: false, paylater: false },
       handler: (r: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) => verify(r.razorpay_order_id, r.razorpay_payment_id, r.razorpay_signature),
     }).open();
   }
@@ -384,7 +384,7 @@ export function PayHeldBooking({ appointment, onClose }: { appointment: Appointm
     <Dialog open onOpenChange={(o) => !busy && !o && onClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{done ? "Appointment confirmed" : "Pay the advance to confirm"}</DialogTitle>
+          <DialogTitle>{done ? "Appointment confirmed" : "Pay the advance by UPI to confirm"}</DialogTitle>
           <DialogDescription>{formatDay(appointment.appointment_date, { weekday: "long", day: "numeric", month: "long" })} at {formatTime(appointment.start_time)} with {appointment.doctor_name}</DialogDescription>
         </DialogHeader>
         {done ? <p className="flex items-start gap-2 text-sm"><CircleCheck className="size-5 shrink-0 text-success" aria-hidden /> Payment received. We have texted you the confirmation.</p> : (
@@ -393,7 +393,7 @@ export function PayHeldBooking({ appointment, onClose }: { appointment: Appointm
             {pay?.driver === "simulate" && (
               <div className="grid gap-2 rounded-lg border border-dashed p-3 text-sm">
                 <p><b>Test mode</b> — no money is charged.</p>
-                <Button disabled={busy} onClick={() => verify(pay.order_id, "sim_payment", pay.sim_signature ?? "")}>{busy && <Loader2 className="animate-spin" aria-hidden />} Simulate payment of {rupees(pay.amount / 100)}</Button>
+                <Button disabled={busy} onClick={() => verify(pay.order_id, "sim_payment", pay.sim_signature ?? "")}>{busy && <Loader2 className="animate-spin" aria-hidden />} Simulate UPI payment of {rupees(pay.amount / 100)}</Button>
               </div>
             )}
             {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
@@ -401,7 +401,7 @@ export function PayHeldBooking({ appointment, onClose }: { appointment: Appointm
         )}
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={busy}>{done ? "Done" : "Close"}</Button>
-          {!done && (!pay || pay.driver === "razorpay") && <Button onClick={() => (pay ? open(pay) : start())} disabled={busy}>{busy && <Loader2 className="animate-spin" aria-hidden />} <CreditCard aria-hidden /> Pay advance</Button>}
+          {!done && (!pay || pay.driver === "razorpay") && <Button onClick={() => (pay ? open(pay) : start())} disabled={busy}>{busy && <Loader2 className="animate-spin" aria-hidden />} <Smartphone aria-hidden /> Pay advance by UPI</Button>}
         </DialogFooter>
       </DialogContent>
     </Dialog>

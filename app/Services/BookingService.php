@@ -74,9 +74,9 @@ final class BookingService
     /**
      * Create a booking inside the caller's transaction. The slot row must already be locked.
      *
-     * @param  array{source: string, online: bool, reason: ?string, actor: int, rescheduled_from?: int}  $o
+     * @param  array{source: string, online: bool, reason: ?string, actor: ?int, rescheduled_from?: int, guest?: array{name: string, mobile: string}}  $o
      */
-    private static function place(object $slot, int $patientId, array $o): int
+    private static function place(object $slot, ?int $patientId, array $o): int
     {
         if (! $slot->is_published || $slot->status !== 'available') {
             abort(409, 'This slot is not open for booking');
@@ -108,20 +108,23 @@ final class BookingService
             || DB::table('doctor_leaves')->where('doctor_id', $slot->doctor_id)->where('start_date', '<=', $slot->slot_date)->where('end_date', '>=', $slot->slot_date)->exists()) {
             abort(409, 'The doctor is not available on this date');
         }
-        if (! DB::table('patients')->where('id', $patientId)->whereNull('deleted_at')->exists()) {
-            abort(404, 'Patient not found');
-        }
-        $clash = DB::table('appointments')->where('patient_id', $patientId)->where('appointment_date', $slot->slot_date)->whereIn('status', self::ACTIVE)
-            ->where('start_time', '<', $slot->end_time)->where('end_time', '>', $slot->start_time)->exists();
-        if ($clash) {
-            abort(409, 'This patient already has an appointment at that time');
+        // A guest has no patient record until the advance is paid, so there is nothing to check yet.
+        if ($patientId !== null) {
+            if (! DB::table('patients')->where('id', $patientId)->whereNull('deleted_at')->exists()) {
+                abort(404, 'Patient not found');
+            }
+            $clash = DB::table('appointments')->where('patient_id', $patientId)->where('appointment_date', $slot->slot_date)->whereIn('status', self::ACTIVE)
+                ->where('start_time', '<', $slot->end_time)->where('end_time', '>', $slot->start_time)->exists();
+            if ($clash) {
+                abort(409, 'This patient already has an appointment at that time');
+            }
         }
 
         $hold = $o['hold'] ?? null; // ['advance' => float, 'expires' => Carbon] when an online advance must be paid first
         $status = ($hold || ($o['online'] && ! SettingsRegistry::value('booking.auto_confirm', true))) ? 'pending' : 'confirmed';
         try {
             $id = DB::table('appointments')->insertGetId([
-                'appointment_number' => 'TMP-'.bin2hex(random_bytes(8)), 'patient_id' => $patientId, 'doctor_id' => $slot->doctor_id,
+                'appointment_number' => 'TMP-'.bin2hex(random_bytes(8)), 'patient_id' => $patientId, 'guest_name' => $o['guest']['name'] ?? null, 'guest_mobile' => $o['guest']['mobile'] ?? null, 'doctor_id' => $slot->doctor_id,
                 'department_id' => $slot->department_id, 'slot_id' => $slot->id, 'active_slot_key' => $slot->id,
                 'appointment_date' => $slot->slot_date, 'start_time' => $slot->start_time, 'end_time' => $slot->end_time,
                 'appointment_type' => $slot->appointment_type, 'reason' => $o['reason'], 'status' => $status, 'payment_status' => $hold ? 'awaiting_payment' : 'unpaid', 'payment_mode' => $hold ? 'advance_online' : 'pay_at_hospital',
@@ -167,6 +170,42 @@ final class BookingService
         return $id;
     }
 
+    /**
+     * A first-time visitor books online. When an advance is due, the time is held under the name and mobile they gave and
+     * NO patient record is made: they are registered by confirmPayment() once the money has arrived. With no advance
+     * to pay there is nothing to wait for, so they are registered and confirmed straight away.
+     */
+    public static function bookGuest(int $slotId, string $name, string $mobile, ?string $reason): int
+    {
+        self::releaseExpiredHolds();
+        $id = DB::transaction(function () use ($slotId, $name, $mobile, $reason) {
+            $slot = DB::table('appointment_slots')->where('id', $slotId)->lockForUpdate()->first() ?? abort(404, 'Slot not found');
+            $hold = null;
+            if (SettingsRegistry::value('booking.advance_required', true)) {
+                $advance = self::advanceFor((float) $slot->consultation_fee, (int) $slot->doctor_id);
+                if ($advance > 0) {
+                    $hold = ['advance' => $advance, 'expires' => now()->addMinutes((int) SettingsRegistry::value('booking.payment_hold_minutes', 15))];
+                }
+            }
+            if ($hold) {
+                $id = self::place($slot, null, ['source' => 'online', 'online' => true, 'reason' => $reason, 'actor' => null, 'hold' => $hold, 'guest' => ['name' => trim($name), 'mobile' => $mobile]]);
+                Audit::record('book', 'appointment', $id, ['slot_id' => $slotId, 'source' => 'online', 'held_for_payment' => true]);
+
+                return $id;
+            }
+            [$userId, $patientId] = GuestRegistration::register($name, $mobile);
+            $id = self::place($slot, $patientId, ['source' => 'online', 'online' => true, 'reason' => $reason, 'actor' => $userId]);
+            $a = DB::table('appointments')->find($id);
+            self::notify($patientId, 'appointment_booked', 'Your appointment is booked', 'Your appointment ('.$a->appointment_number.') with '.self::describe($a).' is '.$a->status.'.', $id);
+            Audit::record('book', 'appointment', $id, ['slot_id' => $slotId, 'source' => 'online'], $userId);
+
+            return $id;
+        });
+        DB::table('appointments')->where('id', $id)->where('payment_status', 'awaiting_payment')->exists() || self::textConfirmation($id);
+
+        return $id;
+    }
+
     /** The advance: the doctor's own amount if they set one, else the hospital default; never more than the fee itself. */
     public static function advanceFor(float $fee, ?int $doctorId = null): float
     {
@@ -206,7 +245,7 @@ final class BookingService
         if (! $a || $a->payment_status !== 'awaiting_payment' || $a->status !== 'pending') {
             abort(409, 'This booking is not waiting for payment any more');
         }
-        $p = DB::table('patients')->find($a->patient_id);
+        $p = $a->patient_id ? DB::table('patients')->find($a->patient_id) : (object) ['full_name' => $a->guest_name, 'mobile' => $a->guest_mobile];
         if (! $a->payment_order_id) {
             return self::startPayment($appointmentId, $p->full_name, $p->mobile);
         }
@@ -258,16 +297,16 @@ final class BookingService
             $slot = DB::table('appointment_slots')->where('id', $a->slot_id)->lockForUpdate()->first();
             $update = ['payment_status' => 'advance_paid', 'payment_reference' => $paymentId, 'paid_at' => now(), 'updated_at' => now()];
             if ($a->status === 'pending') {
-                DB::table('appointments')->where('id', $a->id)->update($update + ['status' => 'confirmed']);
+                DB::table('appointments')->where('id', $a->id)->update($update + self::registerGuest($a) + ['status' => 'confirmed']);
                 self::history($a->id, 'pending', 'confirmed', null, 'Advance paid online');
 
                 return true;
             }
             // Paid after the hold lapsed: take the time back if it is still free, otherwise flag it for a refund.
             $free = $slot && $slot->status === 'available' && $slot->booked_count < $slot->capacity
-                && ! DB::table('appointments')->where('patient_id', $a->patient_id)->where('appointment_date', $a->appointment_date)->whereIn('status', self::ACTIVE)->where('start_time', '<', $a->end_time)->where('end_time', '>', $a->start_time)->exists();
+                && ($a->patient_id === null || ! DB::table('appointments')->where('patient_id', $a->patient_id)->where('appointment_date', $a->appointment_date)->whereIn('status', self::ACTIVE)->where('start_time', '<', $a->end_time)->where('end_time', '>', $a->start_time)->exists());
             if ($free) {
-                DB::table('appointments')->where('id', $a->id)->update($update + ['status' => 'confirmed', 'active_slot_key' => $a->slot_id, 'cancelled_at' => null, 'cancel_reason' => null]);
+                DB::table('appointments')->where('id', $a->id)->update($update + self::registerGuest($a) + ['status' => 'confirmed', 'active_slot_key' => $a->slot_id, 'cancelled_at' => null, 'cancel_reason' => null]);
                 DB::table('appointment_slots')->where('id', $a->slot_id)->increment('booked_count');
                 self::history($a->id, $a->status, 'confirmed', null, 'Advance paid online after the hold had lapsed');
 
@@ -285,6 +324,22 @@ final class BookingService
         }
 
         return $fresh;
+    }
+
+    /**
+     * The money has arrived for a booking made without signing in: register the patient now. Nothing is added for a
+     * booking that already has a patient. Call inside the transaction that confirms the booking.
+     *
+     * @return array<string, int|null>
+     */
+    private static function registerGuest(object $a): array
+    {
+        if ($a->patient_id !== null) {
+            return [];
+        }
+        [$userId, $patientId] = GuestRegistration::register((string) $a->guest_name, (string) $a->guest_mobile, Carbon::parse($a->created_at, 'UTC'), 'guest_booking_paid');
+
+        return ['patient_id' => $patientId, 'booked_by_user_id' => $userId];
     }
 
     /** The confirmation text. The password link follows later, once the hospital has completed the patient's details. */

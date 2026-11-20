@@ -159,7 +159,7 @@ class AppointmentController extends Controller
         if ($user->can($staffPermission)) {
             return false; // staff: no patient-facing cutoffs
         }
-        if ($user->can('portal.access') && $a->patient_id === self::ownPatientId($user)) {
+        if ($user->can('portal.access') && $a->patient_id !== null && $a->patient_id === self::ownPatientId($user)) {
             return true;
         }
         abort(403, 'You do not have permission to perform this action');
@@ -169,7 +169,7 @@ class AppointmentController extends Controller
     public function pay(Request $request, int $id): JsonResponse
     {
         $a = DB::table('appointments')->find($id) ?? abort(404, 'Appointment not found');
-        $a->patient_id === self::ownPatientId($request->user()) || abort(403, 'You do not have permission to perform this action');
+        ($a->patient_id !== null && $a->patient_id === self::ownPatientId($request->user())) || abort(403, 'You do not have permission to perform this action');
 
         return response()->json(BookingService::resumePayment($id));
     }

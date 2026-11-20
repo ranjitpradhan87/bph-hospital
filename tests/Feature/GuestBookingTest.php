@@ -56,9 +56,22 @@ class GuestBookingTest extends HmsTestCase
 
         $this->assertSame(1, (int) DB::table('appointment_slots')->where('id', $slot)->value('booked_count')); // held
         $this->assertSame(0, DB::table('sms_messages')->count());
+        // nobody is registered while the advance is unpaid: the hold only remembers the name and number typed
+        $this->assertNull(User::where('mobile', '9876501234')->first());
+        $this->assertSame(0, DB::table('patients')->count());
+        $this->assertDatabaseHas('appointments', ['appointment_number' => $res['appointment_number'], 'patient_id' => null, 'guest_name' => 'Asha Verma', 'guest_mobile' => '9876501234']);
+        $this->assertSame('9876501234', $res['mobile']);
 
         $this->postJson(self::API.'/public/payments/verify', $this->paid($res['payment']))->assertOk()
             ->assertJsonPath('status', 'confirmed')->assertJsonPath('payment_status', 'advance_paid')->assertJsonPath('account_created', true);
+
+        // the payment registered them: an account and a patient record, with the booking now attached to it
+        $user = User::where('mobile', '9876501234')->firstOrFail();
+        $patient = DB::table('patients')->where('user_id', $user->id)->first();
+        $this->assertSame('Asha Verma', $patient->full_name);
+        $this->assertNotNull($patient->consent_at);
+        $this->assertSame((int) $patient->id, (int) DB::table('appointments')->where('payment_reference', 'pay_TEST1')->value('patient_id'));
+        $this->assertDatabaseHas('audit_logs', ['action' => 'register', 'entity_type' => 'patient', 'entity_id' => $patient->id]);
 
         // only the confirmation is texted now; the password link waits until the hospital has completed the patient's details
         $texts = DB::table('sms_messages')->where('mobile', '9876501234')->orderBy('id')->get();
@@ -90,9 +103,11 @@ class GuestBookingTest extends HmsTestCase
         $this->assertSame(0, (int) DB::table('appointment_slots')->where('id', $slot)->value('booked_count'));
         $this->assertDatabaseHas('appointments', ['appointment_number' => $res['appointment_number'], 'status' => 'cancelled', 'cancel_reason' => 'Advance payment not completed in time']);
 
-        // the same visitor can try again with the abandoned account, and someone else can take the slot meanwhile
+        // an abandoned payment leaves nobody registered; the same visitor can try again, or someone else can take the slot
+        $this->assertSame(0, User::where('mobile', '9876501234')->count());
+        $this->assertSame(0, DB::table('patients')->count());
         $this->postJson(self::API.'/public/bookings', $this->payload($slot))->assertCreated();
-        $this->assertSame(1, User::where('mobile', '9876501234')->count());
+        $this->assertSame(0, User::where('mobile', '9876501234')->count());
     }
 
     public function test_paying_after_the_hold_lapsed_reinstates_the_booking_if_the_time_is_free(): void
@@ -213,9 +228,68 @@ class GuestBookingTest extends HmsTestCase
     {
         $walkIn = $this->patientRow(['full_name' => 'Asha Verma', 'mobile' => '9876501234']);
         $res = $this->postJson(self::API.'/public/bookings', $this->payload($this->slot()))->assertCreated()->json();
+        $this->assertNull(DB::table('patients')->where('id', $walkIn)->value('user_id')); // not touched until the payment arrives
+        $this->postJson(self::API.'/public/payments/verify', $this->paid($res['payment']))->assertOk();
         $this->assertSame(1, DB::table('patients')->where('mobile', '9876501234')->count());
         $this->assertNotNull(DB::table('patients')->where('id', $walkIn)->value('user_id'));
-        $this->assertNotEmpty($res['appointment_number']);
+        $this->assertSame($walkIn, (int) DB::table('appointments')->where('appointment_number', $res['appointment_number'])->value('patient_id'));
+    }
+
+    public function test_a_paid_late_booking_registers_the_patient_but_a_refund_does_not(): void
+    {
+        // the hold lapsed but the time is still free: payment reinstates it, and registers them
+        $slot = $this->slot();
+        $res = $this->postJson(self::API.'/public/bookings', $this->payload($slot))->assertCreated()->json();
+        $this->travel(20)->minutes();
+        \App\Services\BookingService::releaseExpiredHolds();
+        $this->postJson(self::API.'/public/payments/verify', $this->paid($res['payment']))->assertOk()->assertJsonPath('status', 'confirmed');
+        $this->assertSame(1, DB::table('patients')->where('mobile', '9876501234')->count());
+
+        // the time was taken meanwhile: the money is flagged for refund and no patient is registered
+        $slot2 = $this->slot(4, '11:00');
+        $res2 = $this->postJson(self::API.'/public/bookings', $this->payload($slot2, ['full_name' => 'Ravi Kumar', 'mobile' => '9876509999']))->assertCreated()->json();
+        $this->travel(20)->minutes();
+        \App\Services\BookingService::releaseExpiredHolds();
+        DB::table('appointment_slots')->where('id', $slot2)->update(['booked_count' => 1]);
+        $this->postJson(self::API.'/public/payments/verify', $this->paid($res2['payment'], 'pay_LATE2'))->assertStatus(409);
+        $this->assertDatabaseHas('appointments', ['appointment_number' => $res2['appointment_number'], 'payment_status' => 'refund_due', 'patient_id' => null, 'guest_mobile' => '9876509999']);
+        $this->assertNull(User::where('mobile', '9876509999')->first());
+        $this->assertSame(0, DB::table('patients')->where('mobile', '9876509999')->count());
+    }
+
+    public function test_a_number_that_signs_up_before_paying_is_not_written_into(): void
+    {
+        $res = $this->postJson(self::API.'/public/bookings', $this->payload($this->slot()))->assertCreated()->json();
+        // meanwhile the real owner of the number registers and signs in
+        $owner = $this->user('patient', ['mobile' => '9876501234', 'last_login_at' => now()]);
+        $ownerPatient = $this->patientRow(['user_id' => $owner->id, 'full_name' => 'Real Owner', 'mobile' => '9876501234']);
+
+        $this->postJson(self::API.'/public/payments/verify', $this->paid($res['payment']))->assertOk()->assertJsonPath('status', 'confirmed')->assertJsonPath('account_created', false);
+        $pid = (int) DB::table('appointments')->where('appointment_number', $res['appointment_number'])->value('patient_id');
+        $this->assertNotSame($ownerPatient, $pid); // a separate record for staff to link, not the owner's account
+        $this->assertNull(DB::table('patients')->where('id', $pid)->value('user_id'));
+        $this->assertSame(0, DB::table('appointments')->where('patient_id', $ownerPatient)->count());
+    }
+
+    public function test_an_unregistered_hold_cannot_be_reached_by_a_user_with_no_patient_record(): void
+    {
+        $res = $this->postJson(self::API.'/public/bookings', $this->payload($this->slot()))->assertCreated()->json();
+        $id = (int) DB::table('appointments')->where('appointment_number', $res['appointment_number'])->value('id');
+        $stranger = $this->user('patient', ['last_login_at' => now()]); // signed in, but has no patient record
+        $this->actingAs($stranger)->postJson(self::API."/appointments/$id/pay")->assertStatus(403);
+        $this->actingAs($stranger)->postJson(self::API."/appointments/$id/cancel", ['reason' => 'x'])->assertStatus(403);
+        $this->assertSame('pending', DB::table('appointments')->where('id', $id)->value('status'));
+        // held bookings stay out of the staff list until the patient exists
+        $this->actingAs($this->user('receptionist'))->getJson(self::API.'/appointments')->assertOk()->assertJsonPath('total', 0);
+    }
+
+    public function test_with_no_advance_to_pay_they_are_registered_straight_away(): void
+    {
+        $this->setSetting('booking.advance_required', false);
+        $this->postJson(self::API.'/public/bookings', $this->payload($this->slot()))->assertCreated()->assertJsonPath('status', 'confirmed')->assertJsonPath('payment', null);
+        $this->assertNotNull(User::where('mobile', '9876501234')->first());
+        $this->assertSame(1, DB::table('patients')->where('mobile', '9876501234')->count());
+        $this->assertSame(1, DB::table('sms_messages')->where('template', 'booking_confirmed')->count());
     }
 
     public function test_a_held_booking_cannot_be_confirmed_by_hand_and_the_patient_can_resume_payment(): void

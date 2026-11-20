@@ -58,12 +58,12 @@ class PaymentController extends Controller
     public static function summary(object $a): array
     {
         $doctor = DB::table('doctors as d')->join('users as u', 'u.id', '=', 'd.user_id')->where('d.id', $a->doctor_id)->value('u.full_name');
-        $u = DB::table('patients as p')->leftJoin('users as u', 'u.id', '=', 'p.user_id')->where('p.id', $a->patient_id)->first(['p.mobile', 'u.password_changed_at', 'u.last_login_at', 'u.id as user_id']);
+        $u = $a->patient_id ? DB::table('patients as p')->leftJoin('users as u', 'u.id', '=', 'p.user_id')->where('p.id', $a->patient_id)->first(['p.mobile', 'u.password_changed_at', 'u.last_login_at', 'u.id as user_id']) : null;
 
         return [
             'appointment_number' => $a->appointment_number, 'doctor' => $doctor, 'appointment_date' => $a->appointment_date, 'start_time' => $a->start_time, 'status' => $a->status,
             'payment_status' => $a->payment_status, 'payment_mode' => $a->payment_mode, 'consultation_fee' => (float) $a->consultation_fee, 'advance_amount' => (float) $a->advance_amount,
-            'mobile' => $u->mobile, 'account_created' => $u->user_id !== null && $u->password_changed_at === null && $u->last_login_at === null,
+            'mobile' => $u->mobile ?? $a->guest_mobile, 'account_created' => $u !== null && $u->user_id !== null && $u->password_changed_at === null && $u->last_login_at === null,
         ];
     }
 }
