@@ -84,6 +84,16 @@ final class Permissions
                 'name' => 'Admin', 'description' => 'Manages hospital operations',
                 'permissions' => array_values(array_diff($all, ['roles.manage', 'portal.access'])),
             ],
+            'manager' => [
+                'name' => 'Manager', 'description' => 'Runs day-to-day operations: patients, appointments, OPD, IPD, lab and billing. No settings, roles, users, staff or reports',
+                'permissions' => [
+                    'departments.read', 'doctors.read', 'slots.read', 'patients.read', 'patients.create', 'patients.update',
+                    'appointments.read', 'appointments.create', 'appointments.cancel', 'appointments.reschedule',
+                    'appointments.check_in', 'appointments.update_status', 'reception.queue', 'billing.read', 'billing.manage',
+                    'payments.collect', 'payments.refund', 'uploads.create', 'enquiries.manage', 'consultations.read',
+                    'ipd.read', 'ipd.manage', 'lab.read', 'lab.manage', 'opd.read', 'opd.manage',
+                ],
+            ],
             'doctor' => [
                 'name' => 'Doctor', 'description' => 'Own schedule, consultations and assigned patients',
                 'permissions' => [

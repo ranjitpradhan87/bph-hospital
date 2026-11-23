@@ -62,7 +62,7 @@ class AuthRbacTest extends TestCase
 
     public function test_seed_creates_roles_permissions_and_super_admin(): void
     {
-        $this->assertSame(8, Role::where('is_system', true)->count());
+        $this->assertSame(9, Role::where('is_system', true)->count());
         $this->assertContains('super_admin', $this->root()->roleCodes());
         $this->assertTrue($this->root()->can('roles.manage'));
     }

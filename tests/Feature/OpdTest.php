@@ -168,4 +168,15 @@ class OpdTest extends HmsTestCase
         $this->assertStringContainsString('Walk In Patient', $csv);
         $this->assertDatabaseHas('audit_logs', ['action' => 'export', 'entity_type' => 'opd_register']);
     }
+
+    public function test_a_manager_runs_patients_opd_and_ipd_but_not_the_admin_areas(): void
+    {
+        $m = $this->user('manager');
+        foreach (['/patients', '/opd/visits', '/ipd/admissions', '/lab/orders', '/billing/bills'] as $path) {
+            $this->assertSame(200, $this->actingAs($m)->getJson(self::API.$path)->status(), $path);
+        }
+        foreach (['/users', '/roles', '/settings', '/staff', '/reports/overview'] as $path) {
+            $this->actingAs($m)->getJson(self::API.$path)->assertForbidden();
+        }
+    }
 }
