@@ -60,7 +60,8 @@ ul { margin: 0; padding: 0; list-style: none; }
 .brand { display: flex; align-items: center; gap: .6rem; color: var(--fg); font-weight: 700; font-size: 1.15rem; }
 .brand:hover { text-decoration: none; }
 .brand-mark { width: 2.25rem; height: 2.25rem; border-radius: 12px; background: var(--primary); color: var(--primary-fg); display: grid; place-items: center; }
-.brand img { height: 2.25rem; width: auto; }
+.brand img { height: 2.75rem; width: auto; }
+.footer-brand img { height: 2.75rem; width: auto; }
 .nav { display: none; align-items: center; gap: .25rem; }
 .nav a { padding: .5rem .75rem; border-radius: 8px; color: color-mix(in oklch, var(--fg) 75%, transparent); font-weight: 500; font-size: .95rem; }
 .nav a:hover, .nav a[aria-current="page"] { color: var(--primary); background: var(--primary-soft); text-decoration: none; }

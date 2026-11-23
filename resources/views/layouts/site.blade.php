@@ -24,7 +24,8 @@
     <meta property="og:description" content="{{ \Illuminate\Support\Str::limit($metaDescription, 200) }}">
     <meta property="og:url" content="{{ $canonical }}">
     @if (! empty($h['hero_image_url']))<meta property="og:image" content="{{ url($h['hero_image_url']) }}">@endif
-    <meta name="theme-color" content="#2563eb">
+    <meta name="theme-color" content="#0b6bcb">
+    <link rel="icon" type="image/svg+xml" href="{{ asset('img/favicon.svg') }}">
     @if (! empty($noindex))<meta name="robots" content="noindex, follow">@endif
     <link rel="stylesheet" href="{{ asset('css/site.css') }}?v={{ @filemtime(public_path('css/site.css')) }}">
     @stack('head')
@@ -49,7 +50,7 @@
                 @if (! empty($h['logo_url']))
                     <img src="{{ $h['logo_url'] }}" alt="{{ $hospitalName }}">
                 @else
-                    <span class="brand-mark"><x-icon name="heart-pulse" /></span><span>{{ $hospitalName }}</span>
+                    <img src="{{ asset('img/logo.svg') }}" alt="{{ $hospitalName }}" width="190" height="47">
                 @endif
             </a>
             <nav class="nav" aria-label="Main">
@@ -79,7 +80,7 @@
     <div class="container">
         <div class="footer-grid">
             <div>
-                <div class="footer-brand"><x-icon name="heart-pulse" /> {{ $hospitalName }}</div>
+                <div class="footer-brand"><img src="{{ asset('img/logo-dark.svg') }}" alt="{{ $hospitalName }}" width="190" height="47"></div>
                 @if (! empty($h['tagline']))<p style="font-size:.92rem">{{ $h['tagline'] }}</p>@endif
                 @if (! empty($h['emergency_phone']))
                     <a href="{{ F::tel($h['emergency_phone']) }}" class="btn btn-danger"><x-icon name="phone" /> Emergency {{ $h['emergency_phone'] }}</a>

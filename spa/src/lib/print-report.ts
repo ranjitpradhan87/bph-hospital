@@ -91,7 +91,7 @@ export function printIpdBill(a: IpdAdmission, heads: IpdHead[]) {
   const sex = info?.patient.gender ? info.patient.gender[0].toUpperCase() + info.patient.gender.slice(1) : "";
   const sumRow = (l: string, v: number, cls = "") => `<tr class="${cls}"><td>${l}</td><td>:</td><td class="r">${money(v)}</td></tr>`;
   const html = `<div class="ipd">
-    <div class="lh"><h1>${esc(info?.hospital.name ?? siteConfig.name)}</h1><p>${esc(info?.hospital.address ?? "")}</p>${info?.hospital.phone ? `<p>Contact No - ${esc(info.hospital.phone)}</p>` : ""}</div>
+    <div class="lh"><img src="${location.origin}/img/logo.svg" alt="" style="height:46px;margin-bottom:4px"><h1>${esc(info?.hospital.name ?? siteConfig.name)}</h1><p>${esc(info?.hospital.address ?? "")}</p>${info?.hospital.phone ? `<p>Contact No - ${esc(info.hospital.phone)}</p>` : ""}</div>
     <div class="ttl">Patient IPD Bills Summary</div>
     <div class="info"><div>
       <p><b>Patient Name</b>: ${esc(a.patient_name)}</p>
@@ -124,7 +124,7 @@ const vitalsLine = (v: import("@/types/opd").Vitals | null | undefined) =>
 function opdHead(v: OpdLike, title: string) {
   const sex = v.patient.gender ? v.patient.gender[0].toUpperCase() + v.patient.gender.slice(1) : "";
   const day = formatDay(v.visit_date, { day: "2-digit", month: "short", year: "numeric" }).replace(/ /g, "-");
-  return `<div class="lh"><h1>${esc(v.hospital.name)}</h1><p>${esc(v.hospital.address)}</p>${v.hospital.phone ? `<p>Contact No - ${esc(v.hospital.phone)}</p>` : ""}</div>
+  return `<div class="lh"><img src="${location.origin}/img/logo.svg" alt="" style="height:46px;margin-bottom:4px"><h1>${esc(v.hospital.name)}</h1><p>${esc(v.hospital.address)}</p>${v.hospital.phone ? `<p>Contact No - ${esc(v.hospital.phone)}</p>` : ""}</div>
     <div class="ttl">${title}</div>
     <div class="info"><div><p><b>Patient Name</b>: ${esc(v.patient_name)}</p><p><b>Age/Gender</b>: ${v.patient.age != null ? `${v.patient.age} Years` : ""} ${esc(sex)}</p>
       <p><b>Patient ID</b>: ${esc(v.patient_code)}</p>${v.patient_mobile ? `<p><b>Mobile</b>: ${esc(v.patient_mobile)}</p>` : ""}</div>

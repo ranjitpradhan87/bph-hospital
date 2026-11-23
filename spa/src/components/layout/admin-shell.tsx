@@ -8,7 +8,6 @@ import {
   CalendarCheck2,
   CalendarDays,
   IdCard,
-  HeartPulse,
   Inbox,
   LayoutDashboard,
   type LucideIcon,
@@ -30,6 +29,7 @@ import { useState } from "react";
 import { UserMenu } from "@/components/layout/user-menu";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth/auth-provider";
+import { Logo } from "@/components/shared/logo";
 import { siteConfig } from "@/lib/config";
 import { cn } from "@/lib/utils";
 
@@ -109,9 +109,8 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
 
 function Brand() {
   return (
-    <Link href="/admin" className="flex h-14 items-center gap-2 px-5 text-primary">
-      <HeartPulse className="size-6" aria-hidden />
-      <span className="font-heading font-bold">{siteConfig.name}</span>
+    <Link href="/admin" className="flex h-14 items-center px-5" aria-label={siteConfig.name}>
+      <Logo className="h-9" />
     </Link>
   );
 }
