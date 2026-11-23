@@ -51,8 +51,9 @@ export function CreateUserDialog({
 
   async function onSubmit(values: CreateOutput) {
     try {
-      const user = await api<UserAccount>("/users", { method: "POST", body: values });
-      toast.success(`${user.full_name} can now sign in`);
+      const user = await api<UserAccount & { email_sent?: boolean }>("/users", { method: "POST", body: values });
+      if (user.email_sent) toast.success(`${user.full_name} can now sign in. The temporary password and a link to set their own were emailed.`);
+      else toast.warning(`${user.full_name} was created, but the email could not be sent. Share the temporary password yourself.`);
       reset();
       onOpenChange(false);
       onCreated();
@@ -89,7 +90,7 @@ export function CreateUserDialog({
             id="cu-password"
             label="Temporary password"
             error={errors.password?.message}
-            hint="Share it securely; they can change it after signing in."
+            hint="Emailed to them with a link to choose their own password."
             className="sm:col-span-2"
           >
             <Input

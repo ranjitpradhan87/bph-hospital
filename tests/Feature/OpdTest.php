@@ -172,10 +172,11 @@ class OpdTest extends HmsTestCase
     public function test_a_manager_runs_patients_opd_and_ipd_but_not_the_admin_areas(): void
     {
         $m = $this->user('manager');
-        foreach (['/patients', '/opd/visits', '/ipd/admissions', '/lab/orders', '/billing/bills'] as $path) {
+        foreach (["/patients", "/opd/visits", "/ipd/admissions", "/lab/orders", "/billing/bills", "/dashboard/operations"] as $path) {
             $this->assertSame(200, $this->actingAs($m)->getJson(self::API.$path)->status(), $path);
         }
-        foreach (['/users', '/roles', '/settings', '/staff', '/reports/overview'] as $path) {
+        $this->actingAs($m)->getJson(self::API."/dashboard/operations")->assertJsonStructure(["opd" => ["visits", "waiting", "doctors"], "ipd" => ["admitted", "beds_total"], "lab" => ["awaiting_sample"], "appointments" => ["today_total"], "unpaid_bills" => ["count"]]);
+        foreach (['/users', '/roles', '/settings', '/staff', '/reports/overview', '/dashboard/summary'] as $path) {
             $this->actingAs($m)->getJson(self::API.$path)->assertForbidden();
         }
     }

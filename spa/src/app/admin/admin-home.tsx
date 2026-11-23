@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 
+import { ManagerHome } from "@/app/admin/manager-home";
 import { BarChart, BarList } from "@/components/charts/bar-chart";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageHeader } from "@/components/shared/page-header";
@@ -40,6 +41,7 @@ export function AdminHome() {
   const canFinance = can("reports.financial");
 
   if (!user) return null;
+  if (!canDashboard && can("dashboard.operations")) return <ManagerHome />;
   if (!canDashboard) return <StaffWelcome name={user.full_name} />;
   return <Dashboard canFinance={canFinance} />;
 }

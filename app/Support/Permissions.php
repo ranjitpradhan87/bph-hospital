@@ -15,6 +15,7 @@ final class Permissions
         'users.manage' => 'Manage user accounts and role assignment',
         'audit.read' => 'View audit logs',
         'dashboard.view' => 'View admin dashboard',
+        'dashboard.operations' => 'View the day-to-day operations dashboard (today in OPD, IPD, lab and front desk)',
         'uploads.create' => 'Upload files',
         'enquiries.manage' => 'Read and respond to website contact enquiries',
         // master data
@@ -90,7 +91,7 @@ final class Permissions
                     'departments.read', 'doctors.read', 'slots.read', 'patients.read', 'patients.create', 'patients.update',
                     'appointments.read', 'appointments.create', 'appointments.cancel', 'appointments.reschedule',
                     'appointments.check_in', 'appointments.update_status', 'reception.queue', 'billing.read', 'billing.manage',
-                    'payments.collect', 'payments.refund', 'uploads.create', 'enquiries.manage', 'consultations.read',
+                    'payments.collect', 'payments.refund', 'uploads.create', 'enquiries.manage', 'consultations.read', 'dashboard.operations',
                     'ipd.read', 'ipd.manage', 'lab.read', 'lab.manage', 'opd.read', 'opd.manage',
                 ],
             ],

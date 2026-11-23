@@ -181,4 +181,25 @@ class AuthRbacTest extends TestCase
         // An admin cannot hand out a custom role carrying permissions they lack.
         $this->actingAs($this->user('admin'))->postJson(self::API.'/users', $this->newUserBody(['billing_lead']))->assertStatus(403);
     }
+
+    public function test_a_new_staff_account_is_emailed_its_temporary_password_and_a_set_password_link(): void
+    {
+        config(['mail.default' => 'array']);
+        $body = $this->newUserBody(['manager']);
+        $res = $this->actingAs($this->root())->postJson(self::API.'/users', $body)->assertCreated()->assertJsonPath('email_sent', true);
+
+        $messages = app('mail.manager')->mailer('array')->getSymfonyTransport()->messages();
+        $this->assertCount(1, $messages);
+        $mail = $messages->first()->getOriginalMessage();
+        $this->assertSame($body['email'], $mail->getTo()[0]->getAddress());
+        $html = $mail->getHtmlBody();
+        $this->assertStringContainsString('Secret123', $html);
+
+        preg_match('~/set-password\?([^"<\s]+)~', html_entity_decode($html), $m);
+        parse_str($m[1], $q);
+        $this->postJson(self::API.'/auth/set-password', ['u' => $q['u'], 'e' => $q['e'], 's' => $q['s'], 'password' => 'Brand9New'])->assertOk();
+        // The link is single-use: the password it was signed against has changed.
+        $this->postJson(self::API.'/auth/set-password', ['u' => $q['u'], 'e' => $q['e'], 's' => $q['s'], 'password' => 'Another9Pw'])->assertStatus(410);
+        $this->assertNotNull($res->json('id'));
+    }
 }

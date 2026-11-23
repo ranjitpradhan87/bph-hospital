@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Services\RbacGuard;
+use App\Services\StaffAccountMail;
 use App\Support\Audit;
 use App\Support\Phone;
 use Illuminate\Http\JsonResponse;
@@ -72,7 +73,9 @@ class UserController extends Controller
             return $user;
         });
 
-        return response()->json(self::out($user->load('roles.permissions')), 201);
+        $sent = StaffAccountMail::welcome($user, $data['password']);
+
+        return response()->json(self::out($user->load('roles.permissions')) + ['email_sent' => $sent], 201);
     }
 
     public function show(User $user): JsonResponse

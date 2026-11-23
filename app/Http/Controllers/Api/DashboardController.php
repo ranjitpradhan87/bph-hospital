@@ -65,6 +65,57 @@ class DashboardController extends Controller
         ]);
     }
 
+    /** Today at the front desk, OPD, IPD and lab, for the manager who runs the floor (no reports or staff data). */
+    public function operations(Request $request): JsonResponse
+    {
+        $now = Hospital::now();
+        $today = $now->toDateString();
+        $money = fn ($n) => round((float) $n, 2);
+
+        $appts = array_fill_keys(self::STATUSES, 0);
+        foreach (DB::table('appointments')->where('appointment_date', $today)->groupBy('status')->selectRaw('status, count(*) as c')->get() as $r) {
+            $appts[$r->status] = (int) $r->c;
+        }
+
+        $visits = DB::table('opd_visits as v')->leftJoin('bills as b', 'b.id', '=', 'v.bill_id')->where('v.visit_date', $today)
+            ->select('v.doctor_id', 'v.status', 'b.total_amount', 'b.paid_amount')->get();
+        $live = $visits->where('status', '!=', 'cancelled');
+        $byDoctor = $live->groupBy('doctor_id')->map(fn ($g, $id) => [
+            'doctor_id' => (int) $id, 'visits' => $g->count(), 'waiting' => $g->where('status', 'waiting')->count(),
+            'in_consultation' => $g->where('status', 'in_consultation')->count(), 'completed' => $g->where('status', 'completed')->count(),
+        ]);
+        $names = DB::table('doctors as d')->join('users as u', 'u.id', '=', 'd.user_id')->whereIn('d.id', $byDoctor->keys())->pluck('u.full_name', 'd.id');
+        $doctors = $byDoctor->map(fn ($r) => $r + ['name' => $names[$r['doctor_id']] ?? 'Doctor'])->sortByDesc('visits')->values();
+
+        $bedsTotal = DB::table('ipd_beds')->where('is_active', true)->count();
+        $admitted = DB::table('ipd_admissions')->whereNull('deleted_at')->where('status', 'admitted');
+        $ipdToday = fn (string $type) => $money(DB::table('ipd_entries as e')->join('ipd_heads as h', 'h.id', '=', 'e.head_id')->where('h.type', $type)->where('e.entry_date', $today)->sum('e.amount'));
+
+        $lab = fn (string $s) => DB::table('lab_orders')->where('status', $s)->count();
+        $labToday = DB::table('lab_orders')->where('created_at', '>=', self::utc($today))->where('created_at', '<', self::utc(Carbon::parse($today)->addDay()->toDateString()))->where('status', '!=', 'cancelled')->count();
+        $unpaid = DB::table('bills')->whereIn('status', ['pending', 'partially_paid'])->selectRaw('coalesce(sum(total_amount - paid_amount), 0) as amt, count(*) as n')->first();
+
+        return response()->json([
+            'as_of' => $now->format('Y-m-d\TH:i:s'),
+            'appointments' => ['today_total' => array_sum($appts), 'today_by_status' => $appts],
+            'opd' => [
+                'visits' => $live->count(), 'waiting' => $live->where('status', 'waiting')->count(), 'in_consultation' => $live->where('status', 'in_consultation')->count(),
+                'completed' => $live->where('status', 'completed')->count(), 'cancelled' => $visits->where('status', 'cancelled')->count(),
+                'billed' => $money($live->sum('total_amount')), 'collected' => $money($live->sum('paid_amount')), 'doctors' => $doctors,
+            ],
+            'ipd' => [
+                'admitted' => (clone $admitted)->count(), 'beds_total' => $bedsTotal, 'beds_occupied' => (clone $admitted)->whereNotNull('bed_id')->count(),
+                'admissions_today' => DB::table('ipd_admissions')->whereNull('deleted_at')->where('admission_date', $today)->count(),
+                'discharges_today' => DB::table('ipd_admissions')->whereNull('deleted_at')->where('discharge_date', $today)->count(),
+                'received_today' => $ipdToday('receipt'), 'paid_out_today' => $ipdToday('payout'),
+            ],
+            'lab' => ['orders_today' => $labToday, 'awaiting_sample' => $lab('ordered'), 'in_progress' => $lab('sample_collected') + $lab('processing'), 'completed_today' => DB::table('lab_orders')->where('status', 'completed')->where('completed_at', '>=', self::utc($today))->count()],
+            'patients_new_today' => DB::table('patients')->whereNull('deleted_at')->where('created_at', '>=', self::utc($today))->count(),
+            'unpaid_bills' => ['count' => (int) $unpaid->n, 'amount' => $money($unpaid->amt)],
+            'enquiries_new' => DB::table('contact_messages')->where('status', 'new')->count(),
+        ]);
+    }
+
     public function departmentStats(Request $request): JsonResponse
     {
         $request->validate(['from' => 'nullable|date_format:Y-m-d', 'to' => 'nullable|date_format:Y-m-d']);

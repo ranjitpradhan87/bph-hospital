@@ -11,7 +11,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="robots" content="noindex, nofollow">
     <meta name="theme-color" content="#0b6bcb">
-    <link rel="icon" type="image/svg+xml" href="{{ asset('img/favicon.svg') }}">
+    <link rel="icon" type="image/png" href="{{ asset('img/logo.png') }}">
     <title>{{ $name }}</title>
     <script>window.__BPH__ = {!! json_encode(['name' => $name], JSON_HEX_TAG | JSON_HEX_AMP) !!};</script>
     @if ($entry)

@@ -149,6 +149,7 @@ Route::middleware('auth')->group(function () {
 
     // dashboard
     Route::prefix('dashboard')->group(function () {
+        Route::get('/operations', [DashboardController::class, 'operations'])->middleware('permission:dashboard.operations');
         Route::get('/summary', [DashboardController::class, 'summary'])->middleware('permission:dashboard.view');
         Route::get('/department-stats', [DashboardController::class, 'departmentStats'])->middleware('permission:dashboard.view');
         Route::get('/appointment-trend', [DashboardController::class, 'appointmentTrend'])->middleware('permission:dashboard.view');

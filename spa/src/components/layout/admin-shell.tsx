@@ -109,8 +109,8 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
 
 function Brand() {
   return (
-    <Link href="/admin" className="flex h-14 items-center px-5" aria-label={siteConfig.name}>
-      <Logo className="h-9" />
+    <Link href="/admin" className="flex h-24 items-center px-5" aria-label={siteConfig.name}>
+      <Logo className="h-20" />
     </Link>
   );
 }

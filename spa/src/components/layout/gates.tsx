@@ -24,9 +24,9 @@ export function PatientGate({ children }: { children: React.ReactNode }) {
   return (
     <RequireAuth allow={isPatient}>
       <header className="sticky top-0 z-40 border-b bg-background/90 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4 sm:px-6">
+        <div className="mx-auto flex h-20 max-w-5xl items-center justify-between px-4 sm:px-6">
           <Link href="/portal" aria-label={siteConfig.name}>
-            <Logo className="h-9" />
+            <Logo className="h-16" />
           </Link>
           <UserMenu />
         </div>

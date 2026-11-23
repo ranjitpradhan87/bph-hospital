@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Staff;
 use App\Models\User;
 use App\Services\RbacGuard;
+use App\Services\StaffAccountMail;
 use App\Support\Audit;
 use App\Support\Codes;
 use App\Support\Hospital;
@@ -145,6 +146,8 @@ class StaffController extends Controller
 
             return $staff;
         });
+
+        StaffAccountMail::welcome(User::find($staff->user_id), $data['password']);
 
         return response()->json(self::out($staff->refresh(), $actor), 201);
     }
