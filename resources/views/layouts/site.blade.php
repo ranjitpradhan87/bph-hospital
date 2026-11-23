@@ -24,7 +24,7 @@
     <meta property="og:description" content="{{ \Illuminate\Support\Str::limit($metaDescription, 200) }}">
     <meta property="og:url" content="{{ $canonical }}">
     @if (! empty($h['hero_image_url']))<meta property="og:image" content="{{ url($h['hero_image_url']) }}">@endif
-    <meta name="theme-color" content="#0b6bcb">
+    <meta name="theme-color" content="#0b7f43">
     <link rel="icon" type="image/png" href="{{ asset('img/logo.png') }}">
     @if (! empty($noindex))<meta name="robots" content="noindex, follow">@endif
     <link rel="stylesheet" href="{{ asset('css/site.css') }}?v={{ @filemtime(public_path('css/site.css')) }}">

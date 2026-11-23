@@ -27,7 +27,7 @@ final class StaffAccountMail
             .'<p>An account has been created for you at <b>'.$e($hospital).'</b>.</p>'
             .'<p>Sign in at <a href="'.$e($login).'">'.$e($login).'</a><br>Email: <b>'.$e($user->email).'</b><br>Temporary password: <b>'.$e($temporaryPassword).'</b></p>'
             .'<p>Please choose your own password now. The link works for 7 days and only once:</p>'
-            .'<p><a href="'.$e($link).'" style="display:inline-block;background:#0b6bcb;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none">Set my password</a></p>'
+            .'<p><a href="'.$e($link).'" style="display:inline-block;background:#0b7f43;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none">Set my password</a></p>'
             .'<p style="font-size:13px;color:#555">If the button does not open, copy this address into your browser:<br>'.$e($link).'</p>'
             .'<p style="font-size:13px;color:#555">If you were not expecting this, ignore this email or contact the hospital.</p></div>';
 
