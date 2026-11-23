@@ -1,5 +1,5 @@
-import { ChevronLeft, ChevronRight, Download, Loader2, Plus, Printer, Search, Stethoscope, Trash2 } from "lucide-react";
-import { useDeferredValue, useState } from "react";
+import { CalendarDays, ChevronLeft, ChevronRight, ClipboardList, Download, Loader2, Plus, Printer, Search, Stethoscope, Trash2 } from "lucide-react";
+import { Fragment, useDeferredValue, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { EmptyState } from "@/components/shared/empty-state";
@@ -13,7 +13,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth/auth-provider";
@@ -22,12 +23,14 @@ import { printOpdSlip, printPrescription } from "@/lib/print-report";
 import { formatDay } from "@/lib/public-format";
 import { useApi } from "@/lib/use-api";
 import type { Page } from "@/types/api";
-import { addDays, todayIST } from "@/types/booking";
+import { todayIST } from "@/types/booking";
+import { type DateRange, addMonths, isFullMonth, monthRange, rangeLabel, shiftDays } from "@/types/ipd";
+import { cn } from "@/lib/utils";
 import type { LabLookups } from "@/types/lab";
 import { type Medicine, type OpdDoctor, type OpdSummary, type OpdVisit, type OpdVisitRow, VISIT_STATUS_LABEL, type VisitStatus } from "@/types/opd";
 import type { PatientListItem } from "@/types/management";
 
-const PAGE_SIZE = 25;
+const PAGE_SIZE = 100;
 const inr = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
 const METHODS = [["cash", "Cash"], ["upi", "UPI"], ["card", "Card"], ["cheque", "Cheque"], ["other", "Other"]] as const;
 
@@ -41,9 +44,17 @@ export function OpdPage() {
 
 const statusVariant: Record<VisitStatus, "default" | "secondary" | "outline" | "destructive"> = { waiting: "secondary", in_consultation: "default", completed: "outline", cancelled: "destructive" };
 
+const longDay = (d: string) => formatDay(d, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+
+function stepRange(r: DateRange, dir: 1 | -1): DateRange {
+  if (isFullMonth(r)) return monthRange(addMonths(r.from.slice(0, 7), dir));
+  const len = Math.round((Date.parse(r.to) - Date.parse(r.from)) / 86_400_000) + 1;
+  return { from: shiftDays(r.from, dir * len), to: shiftDays(r.to, dir * len) };
+}
+
 function OpdView() {
   const { can } = useAuth();
-  const [date, setDate] = useState(todayIST());
+  const [range, setRange] = useState<DateRange>(monthRange(todayIST().slice(0, 7)));
   const [status, setStatus] = useState("");
   const [doctorId, setDoctorId] = useState("");
   const [search, setSearch] = useState("");
@@ -51,13 +62,22 @@ function OpdView() {
   const [page, setPage] = useState(1);
   const [adding, setAdding] = useState(false);
   const [open, setOpen] = useState<number | null>(null);
-  const filters = { date, status: status || undefined, doctor_id: doctorId || undefined, q: q || undefined };
+  const filters = { from: range.from, to: range.to, status: status || undefined, doctor_id: doctorId || undefined, q: q || undefined };
   const list = useApi<Page<OpdVisitRow>>("/opd/visits", { ...filters, page, page_size: PAGE_SIZE });
   const summary = useApi<OpdSummary>("/opd/summary", filters);
   const doctors = useApi<OpdDoctor[]>("/opd/doctors");
   const reload = () => { list.reload(); summary.reload(); };
   const data = list.data;
   const s = summary.data;
+  const fullMonth = isFullMonth(range);
+  const move = (r: DateRange) => { setRange(r); setPage(1); };
+
+  // Visits grouped under their date, newest day first.
+  const groups = useMemo(() => {
+    const m = new Map<string, OpdVisitRow[]>();
+    for (const v of data?.items ?? []) m.set(v.visit_date, [...(m.get(v.visit_date) ?? []), v]);
+    return [...m.entries()];
+  }, [data]);
 
   async function exportCsv() {
     try {
@@ -66,26 +86,40 @@ function OpdView() {
       if (!res.ok) throw new Error();
       const url = URL.createObjectURL(await res.blob());
       const a = document.createElement("a");
-      a.href = url; a.download = `opd-register-${date}.csv`; a.click();
+      a.href = url; a.download = `opd-register-${range.from}-to-${range.to}.csv`; a.click();
       URL.revokeObjectURL(url);
     } catch {
       toast.error("Could not download the register");
     }
   }
 
+  const feeCell = (v: OpdVisitRow) => (v.bill ? <>{inr.format(v.bill.paid)} <span className="text-muted-foreground">/ {inr.format(v.bill.total)}</span></> : "—");
+  const loadingBlock = <div className="grid gap-3 p-4">{Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-12" />)}</div>;
+  const empty = <EmptyState icon={Stethoscope} title="No OPD visits" description={`Nothing registered for ${rangeLabel(range)}.`} />;
+
   return (
     <div>
-      <PageHeader title="OPD" description="Walk-ins and booked patients for the day: token, consultation, fee and lab tests."
+      <PageHeader title="OPD register" description="Walk-ins and booked patients, day by day: token, consultation, fee and lab tests."
         actions={<>
           <Button variant="outline" onClick={exportCsv}><Download aria-hidden /> Export</Button>
           {can("opd.manage") && <Button onClick={() => setAdding(true)}><Plus aria-hidden /> Register visit</Button>}
         </>} />
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <Button size="icon-sm" variant="outline" aria-label="Previous day" onClick={() => { setDate(addDays(date, -1)); setPage(1); }}><ChevronLeft /></Button>
-        <Input type="date" aria-label="Date" className="w-40" value={date} onChange={(e) => { setDate(e.target.value || todayIST()); setPage(1); }} />
-        <Button size="icon-sm" variant="outline" aria-label="Next day" onClick={() => { setDate(addDays(date, 1)); setPage(1); }}><ChevronRight /></Button>
-        {date !== todayIST() && <Button size="sm" variant="ghost" onClick={() => { setDate(todayIST()); setPage(1); }}>Today</Button>}
+        <Button size="icon-sm" variant="outline" aria-label={fullMonth ? "Previous month" : "Previous period"} onClick={() => move(stepRange(range, -1))}><ChevronLeft /></Button>
+        <h2 className="min-w-40 text-center font-heading text-lg font-semibold">{rangeLabel(range)}</h2>
+        <Button size="icon-sm" variant="outline" aria-label={fullMonth ? "Next month" : "Next period"} onClick={() => move(stepRange(range, 1))}><ChevronRight /></Button>
+        <Button size="sm" variant="ghost" onClick={() => move(monthRange(todayIST().slice(0, 7)))}>This month</Button>
+        <Button size="sm" variant="ghost" onClick={() => move({ from: todayIST(), to: todayIST() })}>Today</Button>
+        <Button size="sm" variant="ghost" onClick={() => move({ from: shiftDays(todayIST(), -6), to: todayIST() })}>Last 7 days</Button>
+        <div className="flex flex-wrap items-end gap-2 sm:ml-auto" role="group" aria-label="Date filter">
+          <div className="grid gap-1"><Label htmlFor="opd-from" className="text-xs">From</Label>
+            <Input id="opd-from" type="date" className="h-9 w-40" value={range.from} max={range.to}
+                   onChange={(e) => e.target.value && move({ from: e.target.value, to: e.target.value > range.to ? e.target.value : range.to })} /></div>
+          <div className="grid gap-1"><Label htmlFor="opd-to" className="text-xs">To</Label>
+            <Input id="opd-to" type="date" className="h-9 w-40" value={range.to} min={range.from}
+                   onChange={(e) => e.target.value && move({ from: e.target.value < range.from ? e.target.value : range.from, to: e.target.value })} /></div>
+        </div>
       </div>
 
       <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-5">
@@ -99,8 +133,13 @@ function OpdView() {
         ))}
       </div>
 
-      <Card className="p-0">
-        <div className="flex flex-col gap-2 border-b p-3 sm:flex-row">
+      <Tabs defaultValue="days" className="gap-3">
+        <TabsList>
+          <TabsTrigger value="days"><CalendarDays className="size-4" aria-hidden /> Day-wise</TabsTrigger>
+          <TabsTrigger value="register"><ClipboardList className="size-4" aria-hidden /> Register</TabsTrigger>
+        </TabsList>
+
+        <div className="flex flex-col gap-2 sm:flex-row">
           <div className="relative flex-1">
             <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden />
             <Input type="search" aria-label="Search visits" placeholder="Patient, ID, mobile or doctor" className="pl-8" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
@@ -114,34 +153,92 @@ function OpdView() {
             {(Object.keys(VISIT_STATUS_LABEL) as VisitStatus[]).map((k) => <option key={k} value={k}>{VISIT_STATUS_LABEL[k]}</option>)}
           </NativeSelect>
         </div>
-        {!data ? <div className="grid gap-3 p-4">{Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-12" />)}</div>
-          : data.items.length === 0 ? <EmptyState icon={Stethoscope} title="No OPD visits" description={`Nothing registered for ${formatDay(date)}.`} />
-          : (
-            <>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="pl-4">Token</TableHead><TableHead>Patient</TableHead><TableHead className="hidden md:table-cell">Doctor</TableHead>
-                    <TableHead>Status</TableHead><TableHead className="hidden text-right sm:table-cell">Fee</TableHead><TableHead className="pr-4 text-right">Lab</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data.items.map((v) => (
-                    <TableRow key={v.id} className="cursor-pointer" onClick={() => setOpen(v.id)}>
-                      <TableCell className="pl-4 font-semibold tabular-nums">#{v.token_number}</TableCell>
-                      <TableCell>{v.patient_name}<span className="block text-xs text-muted-foreground">{v.patient_code}{v.patient_mobile ? ` · ${v.patient_mobile}` : ""}{v.source === "appointment" ? " · Booked" : ""}</span></TableCell>
-                      <TableCell className="hidden md:table-cell">{v.doctor_name}<span className="block text-xs text-muted-foreground">{v.department}</span></TableCell>
-                      <TableCell><Badge variant={statusVariant[v.status]}>{VISIT_STATUS_LABEL[v.status]}</Badge></TableCell>
-                      <TableCell className="hidden text-right tabular-nums sm:table-cell">{v.bill ? <>{inr.format(v.bill.paid)} <span className="text-muted-foreground">/ {inr.format(v.bill.total)}</span></> : "—"}</TableCell>
-                      <TableCell className="pr-4 text-right tabular-nums">{v.lab_count || "—"}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+
+        {/* ---- day by day ---- */}
+        <TabsContent value="days">
+          {!data ? <Card>{loadingBlock}</Card> : data.items.length === 0 ? <Card>{empty}</Card> : (
+            <div className={cn("grid gap-3 transition-opacity", list.loading && "opacity-60")}>
+              {groups.map(([date, rows]) => {
+                const billed = rows.reduce((t, v) => t + (v.bill?.total ?? 0), 0);
+                const paid = rows.reduce((t, v) => t + (v.bill?.paid ?? 0), 0);
+                return (
+                  <Card key={date} className="gap-0 p-0">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/50 px-4 py-2.5">
+                      <h3 className="font-heading font-semibold">{longDay(date)}</h3>
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm tabular-nums">
+                        <span>Patients <b>{rows.length}</b></span>
+                        <span>Billed <b>{inr.format(billed)}</b></span>
+                        <span>Collected <b>{inr.format(paid)}</b></span>
+                      </div>
+                    </div>
+                    <ul className="grid gap-1 p-2">
+                      {rows.map((v) => (
+                        <li key={v.id}>
+                          <button type="button" className="flex w-full items-center justify-between gap-3 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted" onClick={() => setOpen(v.id)}>
+                            <span><b className="font-medium">#{v.token_number} {v.patient_name}</b>
+                              <span className="block text-xs text-muted-foreground">{v.doctor_name}{v.department ? ` · ${v.department}` : ""}{v.source === "appointment" ? " · Booked" : ""}{v.lab_count ? ` · ${v.lab_count} lab` : ""}</span></span>
+                            <span className="flex items-center gap-3"><span className="hidden tabular-nums sm:inline">{feeCell(v)}</span><Badge variant={statusVariant[v.status]}>{VISIT_STATUS_LABEL[v.status]}</Badge></span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </Card>
+                );
+              })}
               <Pagination page={page} total={data.total} pageSize={PAGE_SIZE} onPage={setPage} noun="visit" />
-            </>
+            </div>
           )}
-      </Card>
+        </TabsContent>
+
+        {/* ---- table register ---- */}
+        <TabsContent value="register">
+          <Card className="p-0">
+            {!data ? loadingBlock : data.items.length === 0 ? empty : (
+              <>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="pl-4">Token</TableHead><TableHead>Patient</TableHead><TableHead className="hidden md:table-cell">Doctor</TableHead>
+                      <TableHead>Status</TableHead><TableHead className="hidden text-right sm:table-cell">Fee</TableHead><TableHead className="pr-4 text-right">Lab</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {groups.map(([date, rows]) => (
+                      <Fragment key={date}>
+                        <TableRow className="bg-muted/60 hover:bg-muted/60">
+                          <TableCell colSpan={6} className="py-1.5 pl-4 text-xs font-semibold tracking-wide uppercase">
+                            {longDay(date)} <span className="font-normal text-muted-foreground normal-case">· {rows.length} visit{rows.length === 1 ? "" : "s"}</span>
+                          </TableCell>
+                        </TableRow>
+                        {rows.map((v) => (
+                          <TableRow key={v.id} className="cursor-pointer" onClick={() => setOpen(v.id)}>
+                            <TableCell className="pl-4 font-semibold tabular-nums">#{v.token_number}</TableCell>
+                            <TableCell>{v.patient_name}<span className="block text-xs text-muted-foreground">{v.patient_code}{v.patient_mobile ? ` · ${v.patient_mobile}` : ""}{v.source === "appointment" ? " · Booked" : ""}</span></TableCell>
+                            <TableCell className="hidden md:table-cell">{v.doctor_name}<span className="block text-xs text-muted-foreground">{v.department}</span></TableCell>
+                            <TableCell><Badge variant={statusVariant[v.status]}>{VISIT_STATUS_LABEL[v.status]}</Badge></TableCell>
+                            <TableCell className="hidden text-right tabular-nums sm:table-cell">{feeCell(v)}</TableCell>
+                            <TableCell className="pr-4 text-right tabular-nums">{v.lab_count || "—"}</TableCell>
+                          </TableRow>
+                        ))}
+                      </Fragment>
+                    ))}
+                  </TableBody>
+                  {s && (
+                    <TableFooter>
+                      <TableRow>
+                        <TableCell colSpan={4} className="pl-4 font-semibold">Total · {s.visits} visits</TableCell>
+                        <TableCell className="hidden text-right font-semibold tabular-nums sm:table-cell">{inr.format(s.collected)} <span className="font-normal text-muted-foreground">/ {inr.format(s.billed)}</span></TableCell>
+                        <TableCell className="pr-4 text-right font-semibold tabular-nums">{s.lab_orders}</TableCell>
+                      </TableRow>
+                    </TableFooter>
+                  )}
+                </Table>
+                <Pagination page={page} total={data.total} pageSize={PAGE_SIZE} onPage={setPage} noun="visit" />
+              </>
+            )}
+          </Card>
+        </TabsContent>
+      </Tabs>
 
       {adding && <RegisterDialog doctors={doctors.data ?? []} onClose={() => setAdding(false)} onDone={(id) => { setAdding(false); reload(); setOpen(id); }} />}
       {open !== null && <VisitDialog id={open} onClose={() => { setOpen(null); reload(); }} />}
