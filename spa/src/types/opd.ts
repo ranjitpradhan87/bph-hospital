@@ -32,6 +32,7 @@ export interface OpdVisitRow {
   appointment_number: string | null;
   fee: number;
   lab_count: number;
+  admission_id: number | null;
   bill: OpdBill | null;
   started_at: string | null;
   completed_at: string | null;
@@ -83,4 +84,11 @@ export interface OpdDoctor {
   name: string;
   specialization: string;
   fee: number;
+}
+
+/** What the desk sees: a booking for a later day is "Scheduled", and a patient sent to the ward is "Admitted to IPD". */
+export function visitLabel(v: { status: VisitStatus; visit_date: string; admission_id?: number | null }, today: string): string {
+  if (v.admission_id) return "Admitted to IPD";
+  if (v.status === "waiting" && v.visit_date > today) return "Scheduled";
+  return VISIT_STATUS_LABEL[v.status];
 }

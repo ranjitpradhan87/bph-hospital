@@ -1,7 +1,9 @@
 import { CalendarDays, ChevronLeft, ChevronRight, ClipboardList, Download, Loader2, Plus, Printer, Search, Stethoscope, Trash2 } from "lucide-react";
+import Link from "next/link";
 import { Fragment, useDeferredValue, useMemo, useState } from "react";
 import { toast } from "sonner";
 
+import { AdmitDialog } from "@/app/admin/opd/admit-dialog";
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageHeader } from "@/components/shared/page-header";
 import { Pagination } from "@/components/shared/pagination";
@@ -27,7 +29,7 @@ import { todayIST } from "@/types/booking";
 import { type DateRange, addMonths, isFullMonth, monthRange, rangeLabel, shiftDays } from "@/types/ipd";
 import { cn } from "@/lib/utils";
 import type { LabLookups } from "@/types/lab";
-import { type Medicine, type OpdDoctor, type OpdSummary, type OpdVisit, type OpdVisitRow, VISIT_STATUS_LABEL, type VisitStatus } from "@/types/opd";
+import { type Medicine, type OpdDoctor, type OpdSummary, type OpdVisit, type OpdVisitRow, VISIT_STATUS_LABEL, type VisitStatus, visitLabel } from "@/types/opd";
 import type { PatientListItem } from "@/types/management";
 
 const PAGE_SIZE = 100;
@@ -45,6 +47,11 @@ export function OpdPage() {
 const statusVariant: Record<VisitStatus, "default" | "secondary" | "outline" | "destructive"> = { waiting: "secondary", in_consultation: "default", completed: "outline", cancelled: "destructive" };
 
 const longDay = (d: string) => formatDay(d, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+
+function VisitBadge({ v }: { v: Pick<OpdVisitRow, "status" | "visit_date" | "admission_id"> }) {
+  const label = visitLabel(v, todayIST());
+  return <Badge variant={v.admission_id ? "default" : label === "Scheduled" ? "outline" : statusVariant[v.status]}>{label}</Badge>;
+}
 
 function stepRange(r: DateRange, dir: 1 | -1): DateRange {
   if (isFullMonth(r)) return monthRange(addMonths(r.from.slice(0, 7), dir));
@@ -177,7 +184,7 @@ function OpdView() {
                           <button type="button" className="flex w-full items-center justify-between gap-3 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted" onClick={() => setOpen(v.id)}>
                             <span><b className="font-medium">#{v.token_number} {v.patient_name}</b>
                               <span className="block text-xs text-muted-foreground">{v.doctor_name}{v.department ? ` · ${v.department}` : ""}{v.source === "appointment" ? " · Booked" : ""}{v.lab_count ? ` · ${v.lab_count} lab` : ""}</span></span>
-                            <span className="flex items-center gap-3"><span className="hidden tabular-nums sm:inline">{feeCell(v)}</span><Badge variant={statusVariant[v.status]}>{VISIT_STATUS_LABEL[v.status]}</Badge></span>
+                            <span className="flex items-center gap-3"><span className="hidden tabular-nums sm:inline">{feeCell(v)}</span><VisitBadge v={v} /></span>
                           </button>
                         </li>
                       ))}
@@ -215,7 +222,7 @@ function OpdView() {
                             <TableCell className="pl-4 font-semibold tabular-nums">#{v.token_number}</TableCell>
                             <TableCell>{v.patient_name}<span className="block text-xs text-muted-foreground">{v.patient_code}{v.patient_mobile ? ` · ${v.patient_mobile}` : ""}{v.source === "appointment" ? " · Booked" : ""}</span></TableCell>
                             <TableCell className="hidden md:table-cell">{v.doctor_name}<span className="block text-xs text-muted-foreground">{v.department}</span></TableCell>
-                            <TableCell><Badge variant={statusVariant[v.status]}>{VISIT_STATUS_LABEL[v.status]}</Badge></TableCell>
+                            <TableCell><VisitBadge v={v} /></TableCell>
                             <TableCell className="hidden text-right tabular-nums sm:table-cell">{feeCell(v)}</TableCell>
                             <TableCell className="pr-4 text-right tabular-nums">{v.lab_count || "—"}</TableCell>
                           </TableRow>
@@ -366,6 +373,7 @@ function VisitDialog({ id, onClose }: { id: number; onClose: () => void }) {
   const [payMethod, setPayMethod] = useState("cash");
   const [ordering, setOrdering] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [admitting, setAdmitting] = useState(false);
   const [reason, setReason] = useState("");
 
   const canVitals = can("observations.create") || can("consultations.manage");
@@ -391,7 +399,8 @@ function VisitDialog({ id, onClose }: { id: number; onClose: () => void }) {
         {!v ? <Skeleton className="h-64" /> : (
           <div className="grid gap-5 text-sm">
             <div className="flex flex-wrap items-center gap-2">
-              <Badge variant={statusVariant[v.status]}>{VISIT_STATUS_LABEL[v.status]}</Badge>
+              <VisitBadge v={v} />
+              {v.admission_id && <span>Admitted to the ward{can("ipd.read") && <> · <Link href="/admin/ipd" className="text-primary hover:underline">open IPD register</Link></>}</span>}
               {v.reason && <span className="text-muted-foreground">Reason: {v.reason}</span>}
               {v.cancel_reason && <span className="text-destructive">Cancelled: {v.cancel_reason}</span>}
               <span className="ml-auto flex gap-1">
@@ -494,9 +503,11 @@ function VisitDialog({ id, onClose }: { id: number; onClose: () => void }) {
           {v && live && can("opd.manage") && !cancelling && v.status !== "completed" && <Button variant="ghost" className="text-destructive" onClick={() => setCancelling(true)}>Cancel visit</Button>}
           {v && v.status === "waiting" && (can("opd.manage") || can("consultations.manage")) && <Button variant="outline" disabled={busy} onClick={() => post("/status", { status: "in_consultation" }, "With the doctor")}>Send in</Button>}
           {v && (v.status === "waiting" || v.status === "in_consultation") && (can("opd.manage") || can("consultations.manage")) && <Button variant="outline" disabled={busy} onClick={() => post("/status", { status: "completed" }, "Visit completed")}>Mark done</Button>}
+          {v && live && !v.admission_id && (can("ipd.manage") || can("consultations.manage")) && <Button variant="outline" disabled={busy} onClick={() => setAdmitting(true)}>Admit to IPD</Button>}
           <Button onClick={onClose}>Close</Button>
         </DialogFooter>
       </DialogContent>
+      {admitting && v && <AdmitDialog visit={v} onClose={() => setAdmitting(false)} onDone={() => { setAdmitting(false); detail.reload(); }} />}
       {ordering && v && <OrderTestsDialog visit={v} onClose={() => setOrdering(false)} onDone={() => { setOrdering(false); detail.reload(); }} />}
     </Dialog>
   );

@@ -53,7 +53,8 @@ class OpdController extends Controller
             ->leftJoin('departments as dp', 'dp.id', '=', 'v.department_id')->leftJoin('bills as b', 'b.id', '=', 'v.bill_id')->leftJoin('appointments as a', 'a.id', '=', 'v.appointment_id')
             ->select('v.*', 'p.patient_code', 'p.full_name as patient_name', 'p.mobile as patient_mobile', 'du.full_name as doctor_name', 'd.specialization', 'dp.name as department_name',
                 'a.appointment_number', 'b.bill_number', 'b.total_amount', 'b.paid_amount', 'b.status as bill_status')
-            ->selectRaw('(select count(*) from lab_orders lo where lo.opd_visit_id = v.id and lo.status != \'cancelled\') as lab_count');
+            ->selectRaw('(select count(*) from lab_orders lo where lo.opd_visit_id = v.id and lo.status != \'cancelled\') as lab_count')
+            ->selectRaw('(select ia.id from ipd_admissions ia where ia.opd_visit_id = v.id and ia.deleted_at is null order by ia.id desc limit 1) as admission_id');
     }
 
     private static function rowOut(object $v): array
@@ -62,7 +63,7 @@ class OpdController extends Controller
             'id' => $v->id, 'visit_date' => $v->visit_date, 'token_number' => (int) $v->token_number, 'status' => $v->status, 'source' => $v->source, 'reason' => $v->reason,
             'patient_id' => $v->patient_id, 'patient_code' => $v->patient_code, 'patient_name' => $v->patient_name, 'patient_mobile' => $v->patient_mobile,
             'doctor_id' => $v->doctor_id, 'doctor_name' => $v->doctor_name, 'specialization' => $v->specialization, 'department' => $v->department_name,
-            'appointment_id' => $v->appointment_id, 'appointment_number' => $v->appointment_number, 'fee' => self::money($v->fee), 'lab_count' => (int) $v->lab_count,
+            'appointment_id' => $v->appointment_id, 'appointment_number' => $v->appointment_number, 'admission_id' => $v->admission_id ? (int) $v->admission_id : null, 'fee' => self::money($v->fee), 'lab_count' => (int) $v->lab_count,
             'bill' => $v->bill_id ? ['id' => $v->bill_id, 'number' => $v->bill_number, 'total' => self::money($v->total_amount), 'paid' => self::money($v->paid_amount),
                 'balance' => self::money($v->total_amount - $v->paid_amount), 'status' => $v->bill_status] : null,
             'started_at' => self::iso($v->started_at), 'completed_at' => self::iso($v->completed_at), 'cancel_reason' => $v->cancel_reason,
@@ -148,12 +149,14 @@ class OpdController extends Controller
 
     public function index(Request $request): JsonResponse
     {
+        self::syncFor($request);
         return Paging::respond($request, self::filtered($request)->orderBy('v.visit_date', 'desc')->orderBy('v.doctor_id')->orderBy('v.token_number'), fn ($v) => self::rowOut($v));
     }
 
     /** Totals for the day (or range): how many patients, what is waiting, what was billed and collected. */
     public function summary(Request $request): JsonResponse
     {
+        self::syncFor($request);
         $rows = self::filtered($request)->get();
         $live = $rows->where('status', '!=', 'cancelled');
 
@@ -166,6 +169,7 @@ class OpdController extends Controller
 
     public function export(Request $request): StreamedResponse
     {
+        self::syncFor($request);
         $rows = self::filtered($request)->orderBy('v.visit_date')->orderBy('v.doctor_id')->orderBy('v.token_number')->get();
         Audit::record('export', 'opd_register', null, ['rows' => $rows->count()]);
 
@@ -235,45 +239,122 @@ class OpdController extends Controller
                     Audit::record('create', 'patient', $patientId, ['via' => 'opd_visit']);
                 }
             }
-            $discount = self::money($d['discount'] ?? 0);
-            $discount <= $fee || abort(422, 'The discount cannot be more than the fee');
-            $total = $fee - $discount;
-
-            $today = Hospital::today();
-            $token = 1 + (int) DB::table('opd_visits')->where('visit_date', $today)->where('doctor_id', $doctorId)->lockForUpdate()->max('token_number');
-            $visitId = DB::table('opd_visits')->insertGetId(['visit_date' => $today, 'token_number' => $token, 'patient_id' => $patientId, 'doctor_id' => $doctorId, 'department_id' => $departmentId,
-                'appointment_id' => $appt?->id, 'source' => $appt ? 'appointment' : 'walk_in', 'status' => 'waiting', 'fee' => $total, 'reason' => $d['reason'] ?? ($appt->reason ?? null),
-                'created_by_user_id' => $request->user()->id, 'created_at' => now(), 'updated_at' => now()]);
-
-            if ($fee > 0) {
-                $billId = DB::table('bills')->insertGetId(['bill_number' => 'TMP-'.bin2hex(random_bytes(6)), 'patient_id' => $patientId, 'appointment_id' => $appt?->id, 'bill_date' => $today, 'subtotal' => $fee,
-                    'discount_amount' => $discount, 'total_amount' => $total, 'paid_amount' => 0, 'status' => $total > 0 ? 'pending' : 'paid', 'notes' => 'OPD visit, token '.$token,
-                    'created_by_user_id' => $request->user()->id, 'created_at' => now(), 'updated_at' => now()]);
-                DB::table('bills')->where('id', $billId)->update(['bill_number' => sprintf('BILL-%s-%05d', date('ymd'), $billId)]);
-                $doctorName = DB::table('doctors as dd')->join('users as uu', 'uu.id', '=', 'dd.user_id')->where('dd.id', $doctorId)->value('uu.full_name');
-                DB::table('bill_items')->insert(['bill_id' => $billId, 'item_type' => 'consultation', 'description' => 'OPD consultation'.($doctorName ? ' - '.$doctorName : ''), 'quantity' => 1, 'unit_price' => $fee,
-                    'line_total' => $fee, 'created_at' => now(), 'updated_at' => now()]);
-                DB::table('opd_visits')->where('id', $visitId)->update(['bill_id' => $billId]);
-                // An online advance that is already paid counts towards the fee.
-                $advance = $appt && $appt->payment_status === 'advance_paid' ? min($total, self::money($appt->advance_amount)) : 0;
-                $advance > 0 && LabController::pay($billId, $advance, 'upi', $appt->payment_reference, $request->user()->id);
-                if (! empty($d['payment'])) {
-                    self::money($d['payment']['amount']) <= $total - $advance || abort(422, 'The payment cannot be more than the amount due');
-                    LabController::pay($billId, (float) $d['payment']['amount'], $d['payment']['method'], $d['payment']['reference_no'] ?? null, $request->user()->id);
-                }
-                $paid = (float) DB::table('bills')->where('id', $billId)->value('paid_amount');
-                $appt && DB::table('appointments')->where('id', $appt->id)->update(['payment_status' => $paid >= $total ? 'paid' : $appt->payment_status, 'paid_at' => $paid >= $total ? now() : $appt->paid_at, 'updated_at' => now()]);
-            }
+            $visitId = self::makeVisit((int) $patientId, $doctorId, $departmentId, $fee, self::money($d['discount'] ?? 0), $appt, $d['reason'] ?? ($appt->reason ?? null), $request->user()->id, $d['payment'] ?? null);
             if ($appt) { // the booking is checked in as the visit starts
                 $appt->status === 'pending' && BookingService::transition($appt->id, 'confirmed', $request->user()->id, 'OPD visit started');
                 $appt->status !== 'checked_in' && BookingService::transition($appt->id, 'checked_in', $request->user()->id, 'OPD visit started');
             }
-            Audit::record('create', 'opd_visit', $visitId, ['token' => $token, 'source' => $appt ? 'appointment' : 'walk_in', 'fee' => $total]);
+            Audit::record('create', 'opd_visit', $visitId, ['source' => $appt ? 'appointment' : 'walk_in']);
 
             return $visitId;
         });
 
         return response()->json(self::fullOut($id), 201);
+    }
+
+    /** Token, visit row and fee bill for one patient with one doctor today; shared by the desk and by booked appointments. */
+    private static function makeVisit(int $patientId, int $doctorId, ?int $departmentId, float $fee, float $discount, ?object $appt, ?string $reason, ?int $userId, ?array $payment, ?string $date = null): int
+    {
+        $discount <= $fee || abort(422, 'The discount cannot be more than the fee');
+        $total = $fee - $discount;
+
+        $today = $date ?? Hospital::today();
+        $token = 1 + (int) DB::table('opd_visits')->where('visit_date', $today)->where('doctor_id', $doctorId)->lockForUpdate()->max('token_number');
+        $visitId = DB::table('opd_visits')->insertGetId(['visit_date' => $today, 'token_number' => $token, 'patient_id' => $patientId, 'doctor_id' => $doctorId, 'department_id' => $departmentId,
+            'appointment_id' => $appt?->id, 'source' => $appt ? 'appointment' : 'walk_in', 'status' => 'waiting', 'fee' => $total, 'reason' => $reason,
+            'created_by_user_id' => $userId, 'created_at' => now(), 'updated_at' => now()]);
+
+        if ($fee > 0) {
+            $billId = DB::table('bills')->insertGetId(['bill_number' => 'TMP-'.bin2hex(random_bytes(6)), 'patient_id' => $patientId, 'appointment_id' => $appt?->id, 'bill_date' => $today, 'subtotal' => $fee,
+                'discount_amount' => $discount, 'total_amount' => $total, 'paid_amount' => 0, 'status' => $total > 0 ? 'pending' : 'paid', 'notes' => 'OPD visit, token '.$token,
+                'created_by_user_id' => $userId, 'created_at' => now(), 'updated_at' => now()]);
+            DB::table('bills')->where('id', $billId)->update(['bill_number' => sprintf('BILL-%s-%05d', date('ymd'), $billId)]);
+            $doctorName = DB::table('doctors as dd')->join('users as uu', 'uu.id', '=', 'dd.user_id')->where('dd.id', $doctorId)->value('uu.full_name');
+            DB::table('bill_items')->insert(['bill_id' => $billId, 'item_type' => 'consultation', 'description' => 'OPD consultation'.($doctorName ? ' - '.$doctorName : ''), 'quantity' => 1, 'unit_price' => $fee,
+                'line_total' => $fee, 'created_at' => now(), 'updated_at' => now()]);
+            DB::table('opd_visits')->where('id', $visitId)->update(['bill_id' => $billId]);
+            // An online advance that is already paid counts towards the fee.
+            $advance = $appt && $appt->payment_status === 'advance_paid' ? min($total, self::money($appt->advance_amount)) : 0;
+            $advance > 0 && LabController::pay($billId, $advance, 'upi', $appt->payment_reference, $userId);
+            if (! empty($payment)) {
+                self::money($payment['amount']) <= $total - $advance || abort(422, 'The payment cannot be more than the amount due');
+                LabController::pay($billId, (float) $payment['amount'], $payment['method'], $payment['reference_no'] ?? null, $userId);
+            }
+            $paid = (float) DB::table('bills')->where('id', $billId)->value('paid_amount');
+            $appt && DB::table('appointments')->where('id', $appt->id)->update(['payment_status' => $paid >= $total ? 'paid' : $appt->payment_status, 'paid_at' => $paid >= $total ? now() : $appt->paid_at, 'updated_at' => now()]);
+        }
+
+        return $visitId;
+    }
+
+    /**
+     * Booked appointments are OPD patients: every live appointment dated today or later gets its visit (token and fee bill,
+     * with any online advance already counted), and a waiting visit whose appointment was cancelled is cancelled with it.
+     * Called whenever the register is read, so nothing has to be entered twice.
+     */
+    public static function syncAppointments(?string $from = null, ?string $to = null): void
+    {
+        $today = Hospital::today();
+        $from = max($from ?: $today, $today);
+        $to = min($to ?: $from, Carbon::parse($from)->addDays(62)->toDateString());
+        if ($to < $from) {
+            return;
+        }
+        $due = DB::table('appointments as a')->leftJoin('opd_visits as v', 'v.appointment_id', '=', 'a.id')->whereNull('v.id')
+            ->whereBetween('a.appointment_date', [$from, $to])->whereIn('a.status', ['pending', 'confirmed', 'checked_in'])->whereNotNull('a.patient_id')
+            ->whereNotIn('a.payment_status', ['awaiting_payment', 'refund_due'])->orderBy('a.appointment_date')->orderBy('a.start_time')->orderBy('a.id')->pluck('a.id');
+        foreach ($due as $id) {
+            try {
+                DB::transaction(function () use ($id) {
+                    $a = DB::table('appointments')->where('id', $id)->lockForUpdate()->first();
+                    if (! $a || DB::table('opd_visits')->where('appointment_id', $id)->exists() || ! in_array($a->status, ['pending', 'confirmed', 'checked_in'], true)) {
+                        return;
+                    }
+                    $visit = self::makeVisit((int) $a->patient_id, (int) $a->doctor_id, $a->department_id ? (int) $a->department_id : null, self::money($a->consultation_fee), 0, $a, $a->reason, null, null, $a->appointment_date);
+                    Audit::record('create', 'opd_visit', $visit, ['source' => 'appointment', 'auto' => true]);
+                });
+            } catch (\Illuminate\Database\QueryException) {
+                // another request created it a moment ago
+            }
+        }
+        DB::table('opd_visits as v')->join('appointments as a', 'a.id', '=', 'v.appointment_id')->where('v.status', 'waiting')->whereIn('a.status', ['cancelled', 'rescheduled', 'no_show', 'expired'])
+            ->whereBetween('v.visit_date', [$from, $to])->update(['v.status' => 'cancelled', 'v.cancelled_at' => now(), 'v.cancel_reason' => 'The appointment was cancelled or moved', 'v.updated_at' => now()]);
+    }
+
+    private static function syncFor(Request $request): void
+    {
+        $date = $request->query('date');
+        self::syncAppointments($date ?: $request->query('from'), $date ?: $request->query('to'));
+    }
+
+    /** Send an OPD patient into the IPD register: the same person, doctor and department, with the case carried over. */
+    public function admit(Request $request, int $visit): JsonResponse
+    {
+        $d = $request->validate([
+            'admission_date' => ['nullable', 'date_format:Y-m-d'], 'bed_id' => ['nullable', 'integer'], 'department_id' => ['nullable', 'integer'],
+            'doctor_ids' => ['nullable', 'array', 'max:10'], 'doctor_ids.*' => ['integer', 'distinct'], 'case_title' => ['nullable', 'string', 'max:200'], 'notes' => ['nullable', 'string', 'max:2000'],
+            'admission_time' => ['nullable', 'date_format:H:i'], 'admission_type' => ['nullable', Rule::in(['emergency', 'planned', 'transfer'])], 'room' => ['nullable', 'string', 'max:30'],
+            'attendant_name' => ['nullable', 'string', 'max:150'], 'attendant_mobile' => ['nullable', 'regex:/^[6-9]\d{9}$/'], 'attendant_relation' => ['nullable', 'string', 'max:60'],
+        ], ['attendant_mobile.regex' => 'Enter a valid 10-digit Indian mobile number']);
+        $admission = DB::transaction(function () use ($request, $visit, $d) {
+            $v = self::visitFor($request, $visit);
+            $v->status === 'cancelled' && abort(409, 'A cancelled visit cannot be admitted');
+            DB::table('ipd_admissions')->where('opd_visit_id', $visit)->whereNull('deleted_at')->exists() && abort(409, 'This patient has already been admitted from this visit');
+            DB::table('ipd_admissions')->where('patient_id', $v->patient_id)->where('status', 'admitted')->whereNull('deleted_at')->exists() && abort(409, 'This patient is already admitted in the IPD register');
+            $c = DB::table('consultations')->where('opd_visit_id', $visit)->first();
+            $id = IpdController::admitFromVisit($v, $d + [
+                'doctor_ids' => [(int) $v->doctor_id], 'department_id' => $v->department_id,
+                'case_title' => ($c->diagnosis ?? null) ?: ($v->reason ? mb_substr($v->reason, 0, 200) : null),
+            ], $request->user()->id);
+            // The check-up is over once the patient is admitted.
+            $v->status === 'waiting' && self::advance($v, 'in_consultation', $request->user()->id);
+            $v->status !== 'completed' && self::advance(DB::table('opd_visits')->find($visit), 'completed', $request->user()->id);
+            Audit::record('admit', 'opd_visit', $visit, ['admission_id' => $id]);
+
+            return $id;
+        });
+
+        return response()->json(self::fullOut($visit) + ['admission_id' => $admission], 201);
     }
 
     // ---------- the visit itself ----------
@@ -349,6 +430,11 @@ class OpdController extends Controller
         DB::table('opd_visits')->where('id', $v->id)->update($set);
         if ($v->appointment_id) {
             $a = DB::table('appointments')->find($v->appointment_id);
+            if ($a && $to === 'in_consultation') { // an auto-listed booking is still pending or confirmed until the patient is seen
+                $a->status === 'pending' && BookingService::transition($a->id, 'confirmed', $userId, 'OPD visit');
+                in_array($a->status, ['pending', 'confirmed'], true) && BookingService::transition($a->id, 'checked_in', $userId, 'OPD visit');
+                $a = DB::table('appointments')->find($v->appointment_id);
+            }
             $a && in_array($to, BookingService::TRANSITIONS[$a->status] ?? [], true) && BookingService::transition($a->id, $to, $userId, 'OPD visit');
         }
     }

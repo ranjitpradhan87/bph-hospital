@@ -77,6 +77,7 @@ class DashboardController extends Controller
             $appts[$r->status] = (int) $r->c;
         }
 
+        OpdController::syncAppointments($today, $today);
         $visits = DB::table('opd_visits as v')->leftJoin('bills as b', 'b.id', '=', 'v.bill_id')->where('v.visit_date', $today)
             ->select('v.doctor_id', 'v.status', 'b.total_amount', 'b.paid_amount')->get();
         $live = $visits->where('status', '!=', 'cancelled');

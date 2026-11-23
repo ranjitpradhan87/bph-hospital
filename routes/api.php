@@ -88,6 +88,7 @@ Route::middleware('auth')->group(function () {
 
     // OPD visits
     Route::prefix('opd')->group(function () {
+        Route::get('/admit-options', [IpdController::class, 'lookups'])->middleware('permission:ipd.read|consultations.manage');
         Route::get('/doctors', [OpdController::class, 'doctors'])->middleware('permission:opd.read');
         Route::get('/summary', [OpdController::class, 'summary'])->middleware('permission:opd.read');
         Route::get('/export', [OpdController::class, 'export'])->middleware('permission:opd.read');
@@ -97,6 +98,7 @@ Route::middleware('auth')->group(function () {
         Route::put('/visits/{visit}/vitals', [OpdController::class, 'vitals'])->middleware('permission:observations.create|consultations.manage')->whereNumber('visit');
         Route::put('/visits/{visit}/consultation', [OpdController::class, 'consultation'])->middleware('permission:consultations.manage')->whereNumber('visit');
         Route::post('/visits/{visit}/status', [OpdController::class, 'setStatus'])->middleware('permission:opd.manage|consultations.manage')->whereNumber('visit');
+        Route::post('/visits/{visit}/admit', [OpdController::class, 'admit'])->middleware('permission:ipd.manage|consultations.manage')->whereNumber('visit');
         Route::post('/visits/{visit}/cancel', [OpdController::class, 'cancel'])->middleware('permission:opd.manage')->whereNumber('visit');
         Route::post('/visits/{visit}/payments', [OpdController::class, 'addPayment'])->middleware('permission:payments.collect')->whereNumber('visit');
     });

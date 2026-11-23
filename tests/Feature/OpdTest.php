@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\User;
+use App\Support\Hospital;
 use Illuminate\Support\Facades\DB;
 use Tests\HmsTestCase;
 
@@ -83,6 +84,53 @@ class OpdTest extends HmsTestCase
         $this->assertSame('in_consultation', DB::table('appointments')->where('id', $appt)->value('status'));
         $this->actingAs($doc)->postJson(self::API."/opd/visits/{$v['id']}/status", ['status' => 'completed'])->assertOk()->assertJsonPath('status', 'completed');
         $this->assertSame('completed', DB::table('appointments')->where('id', $appt)->value('status'));
+    }
+
+    public function test_booked_appointments_are_listed_in_opd_by_themselves(): void
+    {
+        $d = $this->doctor([$this->department()['id']]);
+        $pid = $this->patientRow();
+        $today = Hospital::today();
+        $appt = $this->appointment($d, $pid, 0);
+        DB::table('appointments')->where('id', $appt)->update(['appointment_date' => $today, 'payment_status' => 'advance_paid', 'advance_amount' => 200, 'payment_reference' => 'pay_9']);
+        $held = $this->appointment($d, $this->patientRow(), 0, 'pending', '11:00:00');
+        DB::table('appointments')->where('id', $held)->update(['appointment_date' => $today, 'payment_status' => 'awaiting_payment']);
+        $later = $this->appointment($d, $this->patientRow(), 5, 'confirmed', '12:00:00');
+
+        $rows = $this->actingAs($this->user('receptionist'))->getJson(self::API."/opd/visits?date=$today")->assertOk()->json('items');
+        $this->assertCount(1, $rows);
+        $this->assertSame([$appt, 'appointment', 'waiting', 1], [$rows[0]['appointment_id'], $rows[0]['source'], $rows[0]['status'], $rows[0]['token_number']]);
+        $this->assertEquals([600, 200], [$rows[0]['bill']['total'], $rows[0]['bill']['paid']]);
+
+        // listing again never doubles it; a future booking appears on its own day
+        $this->actingAs($this->user('receptionist'))->getJson(self::API."/opd/visits?date=$today")->assertOk()->assertJsonCount(1, 'items');
+        $this->assertSame(1, DB::table('opd_visits')->where('appointment_id', $appt)->count());
+        $this->assertSame(0, DB::table('opd_visits')->where('appointment_id', $later)->count());
+        $day = DB::table('appointments')->where('id', $later)->value('appointment_date');
+        $this->actingAs($this->user('receptionist'))->getJson(self::API."/opd/visits?date=$day")->assertJsonCount(1, 'items');
+
+        // the booking is cancelled, so the waiting visit goes with it
+        DB::table('appointments')->where('id', $appt)->update(['status' => 'cancelled']);
+        $this->actingAs($this->user('receptionist'))->getJson(self::API."/opd/visits?date=$today")->assertJsonPath('items.0.status', 'cancelled');
+    }
+
+    public function test_an_opd_patient_is_admitted_to_ipd_once(): void
+    {
+        $d = $this->doctor([$this->department()['id']]);
+        $v = $this->walkIn($d);
+        $bed = DB::table('ipd_beds')->insertGetId(['code' => 'B-1', 'display_order' => 1, 'is_active' => true, 'created_at' => now(), 'updated_at' => now()]);
+        $this->actingAs($this->doctorUser($d))->putJson(self::API."/opd/visits/{$v['id']}/consultation", ['diagnosis' => 'Appendicitis'])->assertOk();
+
+        $this->actingAs($this->user('nurse'))->postJson(self::API."/opd/visits/{$v['id']}/admit", [])->assertStatus(403);
+        $r = $this->actingAs($this->user('receptionist'))->postJson(self::API."/opd/visits/{$v['id']}/admit", ['bed_id' => $bed, 'room' => '101', 'admission_type' => 'planned', 'attendant_name' => 'Ravi', 'attendant_mobile' => '9876500000'])->assertCreated()->assertJsonPath('status', 'completed');
+        $adm = DB::table('ipd_admissions')->find($r->json('admission_id'));
+        $this->assertSame([$v['patient_id'], $v['id'], 'admitted', 'B-1', 'Appendicitis'], [$adm->patient_id, $adm->opd_visit_id, $adm->status, $adm->bed, $adm->case_title]);
+        $this->assertSame(['101', 'planned', 'Ravi'], [$adm->room, $adm->admission_type, $adm->attendant_name]);
+        $this->actingAs($this->user('receptionist'))->getJson(self::API."/ipd/admissions/{$adm->id}")->assertOk()->assertJsonPath('attendant.name', 'Ravi');
+        $this->assertSame([$d['id']], DB::table('ipd_admission_doctors')->where('admission_id', $adm->id)->pluck('doctor_id')->all());
+        $this->actingAs($this->user('receptionist'))->getJson(self::API."/opd/visits/{$v['id']}")->assertJsonPath('admission_id', $adm->id);
+
+        $this->actingAs($this->user('receptionist'))->postJson(self::API."/opd/visits/{$v['id']}/admit", [])->assertStatus(409);
     }
 
     public function test_the_doctor_records_vitals_diagnosis_and_a_prescription(): void

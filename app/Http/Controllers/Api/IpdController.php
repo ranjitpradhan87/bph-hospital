@@ -123,6 +123,8 @@ class IpdController extends Controller
                 'id' => $a->id, 'admission_date' => $a->admission_date, 'patient_id' => $a->patient_id, 'patient_code' => $a->patient_code ?? null, 'patient_name' => $a->patient_name,
                 'bed' => $a->bed, 'bed_id' => $a->bed_id, 'department_id' => $a->department_id, 'department' => $a->department_name ?? null, 'case_title' => $a->case_title,
                 'doctor_ids' => collect($linked[$a->id] ?? [])->pluck('id')->all(), 'doctor_list' => $linked[$a->id] ?? [], 'other_doctors' => $a->doctors, 'doctors' => self::doctorsText($a, $linked),
+                'opd_visit_id' => $a->opd_visit_id ?? null, 'admission_time' => $a->admission_time ? substr($a->admission_time, 0, 5) : null, 'admission_type' => $a->admission_type ?? null, 'room' => $a->room ?? null,
+                'attendant' => $a->attendant_name ? ['name' => $a->attendant_name, 'mobile' => $a->attendant_mobile, 'relation' => $a->attendant_relation] : null,
                 'anaesthetist_id' => $a->anaesthetist_id, 'anaesthetist' => $a->anaesthetist, 'status' => $a->status, 'discharge_date' => $a->discharge_date, 'notes' => $a->notes,
                 'entries' => $list->map(fn ($e) => self::entryOut($e))->values(), 'totals' => (object) $byHead,
                 'received' => self::money($sum['receipt']), 'payouts' => self::money($sum['payout']), 'charges' => self::money($sum['charge']),
@@ -336,6 +338,23 @@ class IpdController extends Controller
         foreach (array_unique($d['doctor_ids'] ?? []) as $docId) {
             DB::table('ipd_admission_doctors')->insert(['admission_id' => $admission, 'doctor_id' => $docId]);
         }
+    }
+
+    /** An admission raised from an OPD visit: the visit's patient, plus the bed and doctors chosen at the desk. */
+    public static function admitFromVisit(object $visit, array $d, int $userId): int
+    {
+        $d['admission_date'] = $d['admission_date'] ?? Hospital::today();
+        $d['patient_id'] = $visit->patient_id;
+        $id = DB::transaction(function () use ($d, $visit, $userId) {
+            $fields = self::admissionFields($d);
+            $id = DB::table('ipd_admissions')->insertGetId($fields + array_filter(array_intersect_key($d, array_flip(['admission_time', 'admission_type', 'room', 'attendant_name', 'attendant_mobile', 'attendant_relation'])), fn ($x) => $x !== null && $x !== '') + ['opd_visit_id' => $visit->id, 'created_by_user_id' => $userId, 'created_at' => now(), 'updated_at' => now()]);
+            self::syncDoctors($id, $d);
+
+            return $id;
+        });
+        Audit::record('create', 'ipd_admission', $id, ['date' => $d['admission_date'], 'from_opd_visit' => $visit->id]);
+
+        return $id;
     }
 
     public function storeAdmission(Request $request): JsonResponse
