@@ -131,7 +131,7 @@ class LabController extends Controller
     {
         return ['id' => $o->id, 'order_number' => $o->order_number, 'status' => $o->status, 'created_at' => self::iso($o->created_at), 'patient_id' => $o->patient_id,
             'patient_code' => $o->patient_code, 'patient_name' => $o->patient_name, 'doctor_id' => $o->doctor_id, 'doctor_name' => $o->doctor_name,
-            'tests' => $o->tests ?? null, 'bill' => self::billOut($o), 'admission_id' => $o->admission_id, 'ipd_bed' => $o->ipd_bed];
+            'tests' => $o->tests ?? null, 'bill' => self::billOut($o), 'admission_id' => $o->admission_id, 'ipd_bed' => $o->ipd_bed, 'opd_visit_id' => $o->opd_visit_id];
     }
 
     private static function fullOut(int $id): array
@@ -202,11 +202,25 @@ class LabController extends Controller
         $request->merge(['patient_mobile' => $request->filled('patient_mobile') ? Phone::normalize((string) $request->input('patient_mobile')) : null]);
         $d = $request->validate([
             'patient_id' => ['nullable', 'integer'], 'patient_name' => ['nullable', 'string', 'min:2', 'max:150'], 'patient_mobile' => ['nullable', 'regex:/^[6-9]\d{9}$/'],
-            'doctor_id' => ['nullable', 'integer'], 'bill_to_admission' => ['nullable', 'boolean'], 'notes' => ['nullable', 'string', 'max:1000'],
+            'doctor_id' => ['nullable', 'integer'], 'bill_to_admission' => ['nullable', 'boolean'], 'notes' => ['nullable', 'string', 'max:1000'], 'opd_visit_id' => ['nullable', 'integer'],
             'test_ids' => ['required', 'array', 'min:1', 'max:40'], 'test_ids.*' => ['integer', 'distinct'],
             'discount' => ['nullable', 'numeric', 'min:0', 'max:10000000'],
             'payment' => ['nullable', 'array'], 'payment.amount' => ['required_with:payment', 'numeric', 'gt:0'], 'payment.method' => ['required_with:payment', Rule::in(self::METHODS)], 'payment.reference_no' => ['nullable', 'string', 'max:100'],
         ], ['patient_mobile.regex' => 'Enter a valid 10-digit Indian mobile number']);
+
+        // A doctor may order tests for their own OPD visit; taking money or discounting is the lab desk's job.
+        $user = $request->user();
+        $visit = ($d['opd_visit_id'] ?? null) ? (DB::table('opd_visits')->find($d['opd_visit_id']) ?? abort(404, 'Visit not found')) : null;
+        if (! $user->can('lab.manage')) {
+            ($visit && empty($d['payment']) && empty($d['discount'])) || abort(403, 'You do not have permission to perform this action');
+            (int) $visit->doctor_id === (int) DB::table('doctors')->where('user_id', $user->id)->value('id') || abort(403, 'You can order tests only for your own visits');
+        }
+        $visit && $visit->status === 'cancelled' && abort(409, 'This visit was cancelled');
+        if ($visit) {
+            $d['patient_id'] = $visit->patient_id;
+            $d['doctor_id'] = $d['doctor_id'] ?? $visit->doctor_id;
+            $d['bill_to_admission'] = false;
+        }
 
         $tests = DB::table('lab_tests')->whereIn('id', $d['test_ids'])->where('is_active', true)->get()->keyBy('id');
         count($tests) === count($d['test_ids']) || abort(422, 'One of the chosen tests is not available');
@@ -218,7 +232,7 @@ class LabController extends Controller
         $paying = self::money($d['payment']['amount'] ?? 0);
         $paying <= $total || abort(422, 'The payment cannot be more than the amount due');
 
-        $id = DB::transaction(function () use ($d, $tests, $subtotal, $discount, $total, $request) {
+        $id = DB::transaction(function () use ($d, $tests, $subtotal, $discount, $total, $request, $visit) {
             $patientId = $d['patient_id'] ?? null;
             if ($patientId) {
                 DB::table('patients')->where('id', $patientId)->whereNull('deleted_at')->exists() || abort(400, 'Unknown patient');
@@ -237,7 +251,7 @@ class LabController extends Controller
             $billId = DB::table('bills')->insertGetId(['bill_number' => 'TMP-'.bin2hex(random_bytes(6)), 'patient_id' => $patientId, 'bill_date' => Hospital::today(), 'subtotal' => $subtotal,
                 'discount_amount' => $discount, 'total_amount' => $total, 'paid_amount' => 0, 'status' => $total > 0 ? 'pending' : 'paid', 'created_by_user_id' => $request->user()->id, 'created_at' => now(), 'updated_at' => now()]);
             DB::table('bills')->where('id', $billId)->update(['bill_number' => sprintf('BILL-%s-%05d', date('ymd'), $billId)]);
-            $orderId = DB::table('lab_orders')->insertGetId(['order_number' => 'TMP-'.bin2hex(random_bytes(6)), 'patient_id' => $patientId, 'doctor_id' => $d['doctor_id'] ?? null, 'admission_id' => $admissionId,
+            $orderId = DB::table('lab_orders')->insertGetId(['order_number' => 'TMP-'.bin2hex(random_bytes(6)), 'patient_id' => $patientId, 'doctor_id' => $d['doctor_id'] ?? null, 'admission_id' => $admissionId, 'opd_visit_id' => $visit?->id,
                 'bill_id' => $billId, 'status' => 'ordered', 'notes' => $d['notes'] ?? null, 'created_by_user_id' => $request->user()->id, 'created_at' => now(), 'updated_at' => now()]);
             DB::table('lab_orders')->where('id', $orderId)->update(['order_number' => sprintf('LAB-%s-%05d', date('ymd'), $orderId)]);
             foreach ($d['test_ids'] as $tid) {

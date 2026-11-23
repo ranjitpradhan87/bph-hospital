@@ -18,6 +18,7 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { RegisterDialog } from "@/app/admin/opd/opd-page";
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth/auth-provider";
 import { RequireAuth } from "@/lib/auth/require-auth";
@@ -71,6 +72,7 @@ function AppointmentsView() {
   const [booking, setBooking] = useState(false);
   const [cancelling, setCancelling] = useState<Appointment | null>(null);
   const [collecting, setCollecting] = useState<Appointment | null>(null);
+  const [starting, setStarting] = useState<Appointment | null>(null);
   const [rescheduling, setRescheduling] = useState<Appointment | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const data = list.data;
@@ -143,7 +145,8 @@ function AppointmentsView() {
                   const allowed = next && can(next.permission);
                   const canNoShow = ["pending", "confirmed", "checked_in"].includes(a.status) && can("appointments.update_status");
                   const canCollect = can("payments.collect") && !!a.patient_id && ["unpaid", "advance_paid"].includes(a.payment_status) && !["cancelled", "no_show"].includes(a.status) && Number(a.consultation_fee) > 0;
-                  const hasMenu = a.can_cancel || a.can_reschedule || canNoShow || canCollect;
+                  const canStart = can("opd.manage") && !!a.patient_id && ["pending", "confirmed", "checked_in"].includes(a.status) && !["awaiting_payment", "refund_due"].includes(a.payment_status) && a.appointment_date === todayIST();
+                  const hasMenu = a.can_cancel || a.can_reschedule || canNoShow || canCollect || canStart;
                   return (
                     <TableRow key={a.id}>
                       <TableCell className="pl-4">
@@ -167,6 +170,7 @@ function AppointmentsView() {
                             <DropdownMenu>
                               <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={`More actions for ${a.patient_name}`} />}><MoreHorizontal /></DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
+                                {canStart && <DropdownMenuItem onClick={() => setStarting(a)}>Start OPD visit</DropdownMenuItem>}
                                 {canCollect && <DropdownMenuItem onClick={() => setCollecting(a)}>Collect payment</DropdownMenuItem>}
                                 {a.can_reschedule && <DropdownMenuItem onClick={() => setRescheduling(a)}>Reschedule</DropdownMenuItem>}
                                 {canNoShow && <DropdownMenuItem onClick={() => move(a, "no_show")}>Mark no-show</DropdownMenuItem>}
@@ -186,6 +190,7 @@ function AppointmentsView() {
         )}
       </Card>
       {booking && <BookDialog doctors={doctors.data?.items ?? []} onClose={() => setBooking(false)} onDone={() => { setBooking(false); list.reload(); }} />}
+      {starting && <RegisterDialog doctors={[]} appointmentId={starting.id} onClose={() => setStarting(null)} onDone={() => { setStarting(null); list.reload(); toast.message("Open the OPD page to see the token"); }} />}
       {collecting && <CollectDialog appointment={collecting} onClose={() => setCollecting(null)} onDone={() => { setCollecting(null); list.reload(); }} />}
       {cancelling && <CancelDialog appointment={cancelling} onClose={() => setCancelling(null)} onDone={() => { setCancelling(null); list.reload(); }} />}
       {rescheduling && <RescheduleDialog appointment={rescheduling} onClose={() => setRescheduling(null)} onDone={() => { setRescheduling(null); list.reload(); }} />}

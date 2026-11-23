@@ -13,6 +13,7 @@ use App\Http\Controllers\Api\LabController;
 use App\Http\Controllers\Api\PaymentController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\IpdController;
+use App\Http\Controllers\Api\OpdController;
 use App\Http\Controllers\Api\PatientController;
 use App\Http\Controllers\Api\PublicController;
 use App\Http\Controllers\Api\StaffController;
@@ -76,7 +77,7 @@ Route::middleware('auth')->group(function () {
         Route::post('/tests', [LabController::class, 'storeTest'])->middleware('permission:lab.catalogue');
         Route::put('/tests/{test}', [LabController::class, 'updateTest'])->middleware('permission:lab.catalogue')->whereNumber('test');
         Route::get('/orders', [LabController::class, 'orders'])->middleware('permission:lab.read');
-        Route::post('/orders', [LabController::class, 'store'])->middleware('permission:lab.manage');
+        Route::post('/orders', [LabController::class, 'store'])->middleware('permission:lab.manage|consultations.manage');
         Route::get('/orders/{order}', [LabController::class, 'show'])->middleware('permission:lab.read')->whereNumber('order');
         Route::post('/orders/{order}/payments', [LabController::class, 'addPayment'])->middleware('permission:lab.manage')->whereNumber('order');
         Route::post('/orders/{order}/status', [LabController::class, 'setStatus'])->middleware('permission:lab.results|lab.manage')->whereNumber('order');
@@ -84,6 +85,21 @@ Route::middleware('auth')->group(function () {
         Route::post('/orders/{order}/cancel', [LabController::class, 'cancel'])->middleware('permission:lab.manage')->whereNumber('order');
     });
     Route::get('/portal/lab-orders', [LabController::class, 'mine'])->middleware('permission:portal.access');
+
+    // OPD visits
+    Route::prefix('opd')->group(function () {
+        Route::get('/doctors', [OpdController::class, 'doctors'])->middleware('permission:opd.read');
+        Route::get('/summary', [OpdController::class, 'summary'])->middleware('permission:opd.read');
+        Route::get('/export', [OpdController::class, 'export'])->middleware('permission:opd.read');
+        Route::get('/visits', [OpdController::class, 'index'])->middleware('permission:opd.read');
+        Route::post('/visits', [OpdController::class, 'store'])->middleware('permission:opd.manage');
+        Route::get('/visits/{visit}', [OpdController::class, 'show'])->middleware('permission:opd.read')->whereNumber('visit');
+        Route::put('/visits/{visit}/vitals', [OpdController::class, 'vitals'])->middleware('permission:observations.create|consultations.manage')->whereNumber('visit');
+        Route::put('/visits/{visit}/consultation', [OpdController::class, 'consultation'])->middleware('permission:consultations.manage')->whereNumber('visit');
+        Route::post('/visits/{visit}/status', [OpdController::class, 'setStatus'])->middleware('permission:opd.manage|consultations.manage')->whereNumber('visit');
+        Route::post('/visits/{visit}/cancel', [OpdController::class, 'cancel'])->middleware('permission:opd.manage')->whereNumber('visit');
+        Route::post('/visits/{visit}/payments', [OpdController::class, 'addPayment'])->middleware('permission:payments.collect')->whereNumber('visit');
+    });
 
     // IPD register
     Route::prefix('ipd')->group(function () {

@@ -108,6 +108,57 @@ export function printIpdBill(a: IpdAdmission, heads: IpdHead[]) {
   return openPrint(`IPD bill ${a.patient_name}`, html, IPD_STYLE);
 }
 
+const OPD_STYLE = `
+  .opd{font:13px/1.45 Arial,Helvetica,sans-serif;color:#000;max-width:720px;margin:0 auto}.opd .lh{text-align:center;border-bottom:1px solid #000;padding-bottom:6px}
+  .opd .lh h1{font-size:22px;letter-spacing:.04em;margin:0;font-variant:small-caps}.opd .lh p{margin:2px 0;font-weight:600}
+  .opd .ttl{text-align:center;font-weight:700;text-decoration:underline;margin:8px 0}
+  .opd .info{display:flex;justify-content:space-between;gap:20px;border-top:1px solid #000;border-bottom:1px solid #000;padding:6px 0}.opd .info div{flex:1}.opd .info b{display:inline-block;min-width:90px}
+  .opd table{width:100%;margin-top:8px}.opd th,.opd td{border:0;padding:3px 4px}.opd th{border-bottom:1px solid #000;color:#000;font-size:12px;text-transform:none}
+  .opd .box{border:1px solid #000;padding:6px 8px;margin-top:8px}.opd .tok{font-size:28px;font-weight:700;text-align:center;border:2px solid #000;padding:4px 14px;display:inline-block}
+  .opd .sig{display:flex;justify-content:space-between;margin-top:50px;border-bottom:1px solid #000;padding-bottom:6px}`;
+
+type OpdLike = import("@/types/opd").OpdVisit;
+const vitalsLine = (v: import("@/types/opd").Vitals | null | undefined) =>
+  v ? [v.bp && `BP ${v.bp}`, v.pulse && `Pulse ${v.pulse}/min`, v.temperature && `Temp ${v.temperature}°C`, v.spo2 && `SpO2 ${v.spo2}%`, v.weight && `Wt ${v.weight} kg`, v.height && `Ht ${v.height} cm`, v.respiratory_rate && `RR ${v.respiratory_rate}/min`].filter(Boolean).join(" · ") : "";
+
+function opdHead(v: OpdLike, title: string) {
+  const sex = v.patient.gender ? v.patient.gender[0].toUpperCase() + v.patient.gender.slice(1) : "";
+  const day = formatDay(v.visit_date, { day: "2-digit", month: "short", year: "numeric" }).replace(/ /g, "-");
+  return `<div class="lh"><h1>${esc(v.hospital.name)}</h1><p>${esc(v.hospital.address)}</p>${v.hospital.phone ? `<p>Contact No - ${esc(v.hospital.phone)}</p>` : ""}</div>
+    <div class="ttl">${title}</div>
+    <div class="info"><div><p><b>Patient Name</b>: ${esc(v.patient_name)}</p><p><b>Age/Gender</b>: ${v.patient.age != null ? `${v.patient.age} Years` : ""} ${esc(sex)}</p>
+      <p><b>Patient ID</b>: ${esc(v.patient_code)}</p>${v.patient_mobile ? `<p><b>Mobile</b>: ${esc(v.patient_mobile)}</p>` : ""}</div>
+      <div><p><b>Doctor</b>: ${esc(v.doctor_name)}</p>${v.department ? `<p><b>Department</b>: ${esc(v.department)}</p>` : ""}<p><b>Visit Date</b>: ${day}</p><p><b>Token No</b>: ${v.token_number}</p></div></div>`;
+}
+
+/** The OPD slip handed over at registration: token, doctor and the fee taken. */
+export function printOpdSlip(v: OpdLike, printedBy?: string) {
+  const money = (n: number) => n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const bill = v.bill;
+  const pays = v.payments.map((p) => `<tr><td>${esc(p.receipt_number)}</td><td>${esc(p.method.toUpperCase())}${p.reference_no ? ` · ${esc(p.reference_no)}` : ""}</td><td class="r">${money(p.amount)}</td></tr>`).join("");
+  return openPrint(`OPD slip ${v.token_number}`, `<div class="opd">${opdHead(v, "OPD Slip - Cum Receipt")}
+    <p style="text-align:center;margin:10px 0"><span class="tok">Token ${v.token_number}</span></p>
+    ${v.reason ? `<p><b>Reason for visit</b>: ${esc(v.reason)}</p>` : ""}
+    ${bill ? `<table><thead><tr><th>Service</th><th class="r">Amount</th></tr></thead><tbody><tr><td>OPD consultation - ${esc(v.doctor_name)}</td><td class="r">${money(bill.total)}</td></tr>
+      <tr><td class="r"><b>Paid</b></td><td class="r">${money(bill.paid)}</td></tr><tr><td class="r"><b>Balance</b></td><td class="r"><b>${money(bill.balance)}</b></td></tr></tbody></table>
+      ${pays ? `<table><thead><tr><th>Receipt</th><th>Method</th><th class="r">Amount</th></tr></thead><tbody>${pays}</tbody></table>` : ""}` : `<p>No consultation fee.</p>`}
+    <div class="sig"><span>Printed By : ${esc(printedBy ?? "")}</span><span>Thank You.</span><span>Authorized Signatory</span></div></div>`, OPD_STYLE);
+}
+
+/** The doctor's prescription: complaint, vitals, diagnosis, medicines, advice and follow-up. */
+export function printPrescription(v: OpdLike) {
+  const c = v.consultation;
+  const rows = v.prescriptions.map((m, i) => `<tr><td>${i + 1}</td><td><b>${esc(m.medicine_name)}</b>${m.instructions ? `<br><span class="muted">${esc(m.instructions)}</span>` : ""}</td><td>${esc(m.dosage)}</td><td>${esc(m.frequency)}</td><td>${esc(m.duration)}</td></tr>`).join("");
+  const vit = vitalsLine(c?.vitals);
+  return openPrint(`Prescription ${v.patient_name}`, `<div class="opd">${opdHead(v, "Prescription")}
+    ${vit ? `<div class="box"><b>Vitals</b>: ${esc(vit)}</div>` : ""}
+    ${c?.chief_complaint ? `<p><b>Complaint</b>: ${esc(c.chief_complaint)}</p>` : ""}${c?.diagnosis ? `<p><b>Diagnosis</b>: ${esc(c.diagnosis)}</p>` : ""}
+    ${rows ? `<table><thead><tr><th>#</th><th>Medicine</th><th>Dose</th><th>Frequency</th><th>Duration</th></tr></thead><tbody>${rows}</tbody></table>` : ""}
+    ${v.lab_orders.length ? `<p><b>Tests advised</b>: ${esc(v.lab_orders.map((l) => l.tests).join("; "))}</p>` : ""}
+    ${c?.advice ? `<p><b>Advice</b>: ${esc(c.advice)}</p>` : ""}${c?.follow_up_date ? `<p><b>Follow-up</b>: ${esc(formatDay(c.follow_up_date, { day: "numeric", month: "short", year: "numeric" }))}</p>` : ""}
+    <div class="sig"><span></span><span></span><span>${esc(v.doctor_name)}</span></div></div>`, OPD_STYLE);
+}
+
 /** The bill and receipts for an order. */
 export function printBill(o: LabOrder) {
   const rows = o.items.map((i) => `<tr><td>${esc(i.test_name)}</td><td class="r">${inr(i.price)}</td></tr>`).join("");

@@ -47,6 +47,9 @@ final class Permissions
         'reception.queue' => 'Manage front-desk queue',
         'consultations.read' => 'View consultations and prescriptions',
         'consultations.manage' => 'Record consultations and prescriptions',
+        // out-patient (OPD) visits
+        'opd.read' => 'View OPD visits, tokens and the daily register',
+        'opd.manage' => 'Register OPD visits, collect the consultation fee and cancel visits',
         // in-patient (IPD) register
         'ipd.read' => 'View the in-patient (IPD) register and its totals',
         'ipd.manage' => 'Record IPD admissions, receipts and expenses',
@@ -86,7 +89,7 @@ final class Permissions
                 'permissions' => [
                     'departments.read', 'doctors.read', 'slots.read', 'appointments.read_own', 'appointments.update_status',
                     'patients.read', 'medical_records.read', 'medical_records.create', 'observations.create',
-                    'consultations.read', 'consultations.manage', 'uploads.create', 'lab.read',
+                    'consultations.read', 'consultations.manage', 'uploads.create', 'lab.read', 'opd.read',
                 ],
             ],
             'receptionist' => [
@@ -96,21 +99,21 @@ final class Permissions
                     'appointments.read', 'appointments.create', 'appointments.cancel', 'appointments.reschedule',
                     'appointments.check_in', 'appointments.update_status', 'reception.queue', 'billing.read',
                     'billing.manage', 'payments.collect', 'uploads.create', 'enquiries.manage', 'ipd.read', 'ipd.manage',
-                    'lab.read', 'lab.manage',
+                    'lab.read', 'lab.manage', 'opd.read', 'opd.manage',
                 ],
             ],
             'accountant' => [
                 'name' => 'Accountant', 'description' => 'Billing, payments and financial reports',
                 'permissions' => [
                     'patients.read', 'appointments.read', 'billing.read', 'billing.manage', 'payments.collect',
-                    'payments.refund', 'reports.view', 'reports.financial', 'ipd.read', 'ipd.manage', 'lab.read', 'lab.manage',
+                    'payments.refund', 'reports.view', 'reports.financial', 'ipd.read', 'ipd.manage', 'lab.read', 'lab.manage', 'opd.read',
                 ],
             ],
             'nurse' => [
                 'name' => 'Nurse', 'description' => 'Assigned patients and clinical observations',
                 'permissions' => [
                     'departments.read', 'doctors.read', 'patients.read', 'appointments.read', 'appointments.check_in',
-                    'medical_records.read', 'observations.create', 'consultations.read',
+                    'medical_records.read', 'observations.create', 'consultations.read', 'opd.read',
                 ],
             ],
             'lab_technician' => [

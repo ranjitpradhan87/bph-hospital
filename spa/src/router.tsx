@@ -6,6 +6,7 @@ import { GateFallback, PatientGate, StaffGate } from "@/components/layout/gates"
 import { buttonVariants } from "@/components/ui/button";
 import { AdminHome } from "@/app/admin/admin-home";
 import { IpdPage } from "@/app/admin/ipd/ipd-page";
+import { OpdPage } from "@/app/admin/opd/opd-page";
 import { LabPage } from "@/app/admin/lab/lab-page";
 import { BillingPage } from "@/app/admin/billing/billing-page";
 import { ReportsPage } from "@/app/admin/reports/reports-page";
@@ -88,6 +89,7 @@ export const router = createBrowserRouter([
       { index: true, element: <AdminHome /> },
       { path: "appointments", element: <AppointmentsPage /> },
       { path: "slots", element: <SchedulesPage /> },
+      { path: "opd", element: <OpdPage /> },
       { path: "ipd", element: <IpdPage /> },
       { path: "lab", element: <LabPage /> },
       { path: "billing", element: <BillingPage /> },

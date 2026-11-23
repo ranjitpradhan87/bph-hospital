@@ -13,6 +13,7 @@ import { z } from "zod";
 
 import { PatientIpd } from "@/app/admin/ipd/patient-ipd";
 import { PatientLab } from "@/app/admin/lab/lab-page";
+import { PatientOpd } from "@/app/admin/opd/patient-opd";
 import { PatientForm } from "@/app/admin/patients/patient-form";
 import { AppointmentsTable } from "@/components/shared/appointments-table";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -105,6 +106,7 @@ function PatientDetail() {
             <TabsTrigger value="personal">Personal</TabsTrigger>
             {(can("appointments.read") || can("appointments.read_own")) && <TabsTrigger value="appointments">Appointments</TabsTrigger>}
             {can("billing.read") && <TabsTrigger value="billing">Billing</TabsTrigger>}
+            {can("opd.read") && <TabsTrigger value="opd">OPD visits</TabsTrigger>}
             {can("ipd.read") && <TabsTrigger value="ipd">In-patient</TabsTrigger>}
             {can("lab.read") && <TabsTrigger value="lab">Lab tests</TabsTrigger>}
             {clinical && <TabsTrigger value="medical">Medical</TabsTrigger>}
@@ -136,6 +138,7 @@ function PatientDetail() {
             </CardContent>
           </Card>
         </TabsContent>
+        {can("opd.read") && <TabsContent value="opd"><PatientOpd patientId={p.id} /></TabsContent>}
         <TabsContent value="ipd"><PatientIpd patientId={p.id} /></TabsContent>
         {can("lab.read") && <TabsContent value="lab"><PatientLab patientId={p.id} patientName={p.full_name} /></TabsContent>}
         <TabsContent value="appointments"><Appointments patientId={p.id} /></TabsContent>

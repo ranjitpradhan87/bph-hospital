@@ -2,6 +2,7 @@
 
 import {
   BedDouble,
+  ClipboardList,
   CalendarClock,
   FlaskConical,
   CalendarCheck2,
@@ -46,6 +47,7 @@ const NAV: NavItem[] = [
   { href: "/admin", label: "Dashboard", icon: LayoutDashboard, anyOf: [] },
   { href: "/admin/appointments", label: "Appointments", icon: CalendarDays, anyOf: ["appointments.read", "appointments.read_own"] },
   { href: "/admin/slots", label: "Schedules & slots", icon: CalendarClock, anyOf: ["slots.read"] },
+  { href: "/admin/opd", label: "OPD", icon: ClipboardList, anyOf: ["opd.read"] },
   { href: "/admin/ipd", label: "IPD register", icon: BedDouble, anyOf: ["ipd.read"] },
   { href: "/admin/lab", label: "Lab", icon: FlaskConical, anyOf: ["lab.read"] },
   { href: "/admin/patients", label: "Patients", icon: UserRound, anyOf: ["patients.read"] },
