@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Patient;
 use App\Support\Audit;
 use App\Support\Hospital;
+use App\Support\SettingsRegistry;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -236,6 +237,26 @@ class IpdController extends Controller
         $row = self::baseAdmissions()->where('a.id', $admission)->first() ?? abort(404, 'Admission not found');
 
         return response()->json(self::admissionsOut(collect([$row]))[0]);
+    }
+
+    /** One admission, with what the printed bill needs besides the entries. */
+    public function billAdmission(Request $request, int $admission): JsonResponse
+    {
+        $row = self::baseAdmissions()->where('a.id', $admission)->first() ?? abort(404, 'Admission not found');
+        $out = self::admissionsOut(collect([$row]))[0];
+
+        // What the printed bill needs besides the entries: who the patient is and the hospital's letterhead.
+        $p = $row->patient_id ? DB::table('patients')->find($row->patient_id) : null;
+        $addr = (array) SettingsRegistry::value('hospital.address', []);
+        $out['bill'] = [
+            'hospital' => ['name' => (string) SettingsRegistry::value('hospital.name', config('app.name')), 'phone' => (string) SettingsRegistry::value('hospital.phone', ''),
+                'address' => implode(', ', array_filter([$addr['line1'] ?? '', $addr['line2'] ?? '', $addr['city'] ?? '', $addr['state'] ?? '', $addr['pincode'] ?? '']))],
+            'patient' => ['age' => $p && $p->date_of_birth ? (int) \Illuminate\Support\Carbon::parse($p->date_of_birth)->diffInYears(now()) : null, 'gender' => $p->gender ?? null,
+                'address' => trim(($p->address ?? '').($p && $p->city ? ', '.$p->city : ''), ', ') ?: null],
+            'printed_by' => $request->user()->full_name,
+        ];
+
+        return response()->json($out);
     }
 
     private static function admissionRules(): array

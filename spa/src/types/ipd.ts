@@ -71,6 +71,12 @@ export interface IpdAdmission {
   charges: number;
   /** Received − paid out. */
   balance: number;
+  /** Only on a single admission: what the printed bill needs. */
+  bill?: {
+    hospital: { name: string; phone: string; address: string };
+    patient: { age: number | null; gender: string | null; address: string | null };
+    printed_by: string;
+  };
 }
 
 export interface IpdSummary {

@@ -1,6 +1,7 @@
 import { siteConfig } from "@/lib/config";
 import { formatDay } from "@/lib/public-format";
 import type { BillDetail } from "@/types/billing";
+import type { IpdAdmission, IpdHead } from "@/types/ipd";
 import type { LabOrder, PortalLabOrder } from "@/types/lab";
 
 const esc = (s: string | number | null | undefined) =>
@@ -16,10 +17,10 @@ const STYLE = `
   .foot{margin-top:28px;font-size:12px;color:#555}@media print{body{margin:12mm}}`;
 
 /** Open a print-ready page in a new window. Plain HTML, so it prints the same on any device. */
-function openPrint(title: string, body: string) {
+function openPrint(title: string, body: string, extraStyle = "") {
   const w = window.open("", "_blank", "width=900,height=900");
   if (!w) return false;
-  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>${STYLE}</style></head><body>${body}<script>window.onload=function(){window.print()}<\/script></body></html>`);
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>${STYLE}${extraStyle}</style></head><body>${body}<script>window.onload=function(){window.print()}<\/script></body></html>`);
   w.document.close();
   return true;
 }
@@ -52,6 +53,59 @@ export function printInvoice(b: BillDetail) {
     <tr><td colspan="3" class="r"><b>Total</b></td><td class="r"><b>${inr(b.total)}</b></td></tr><tr><td colspan="3" class="r">Paid</td><td class="r">${inr(b.paid)}</td></tr>
     <tr><td colspan="3" class="r"><b>Balance</b></td><td class="r"><b>${inr(b.balance)}</b></td></tr></tbody></table>
     ${pays ? `<h2>Payments</h2><table><thead><tr><th>Receipt</th><th>Date</th><th>Method</th><th class="r">Amount</th></tr></thead><tbody>${pays}</tbody></table>` : ""}`);
+}
+
+const IPD_STYLE = `
+  .ipd{font:12px/1.4 Arial,Helvetica,sans-serif;color:#000}.ipd .lh{text-align:center;border-bottom:1px solid #000;padding-bottom:6px}
+  .ipd .lh h1{font-size:24px;letter-spacing:.04em;margin:0;font-variant:small-caps}.ipd .lh p{margin:2px 0;font-weight:600}
+  .ipd .ttl{text-align:center;font-weight:700;text-decoration:underline;margin:8px 0}
+  .ipd .info{display:flex;justify-content:space-between;gap:20px;border-top:1px solid #000;border-bottom:1px solid #000;padding:6px 0}.ipd .info div{flex:1}
+  .ipd .info b{display:inline-block;min-width:100px}
+  .ipd table{width:100%;margin-top:8px}.ipd th,.ipd td{border:0;padding:2px 4px}.ipd th{border-bottom:1px solid #000;text-transform:none;font-size:12px;color:#000}
+  .ipd .grp td{font-weight:700;text-decoration:underline;padding-top:6px}.ipd .sub td{font-weight:700;border-top:1px solid #000;border-bottom:1px solid #000}
+  .ipd .sum{margin-left:auto;width:55%;margin-top:10px;border-top:1px solid #000}.ipd .sum td{padding:3px 4px}.ipd .sum .big td{font-weight:700}
+  .ipd .sig{display:flex;justify-content:space-between;margin-top:50px;border-bottom:1px solid #000;padding-bottom:6px}`;
+
+/** The IPD bill summary: charges grouped by column with a subtotal each, then gross, deposit, refund and balance. */
+export function printIpdBill(a: IpdAdmission, heads: IpdHead[]) {
+  const info = a.bill;
+  const money = (n: number) => n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const day = (d: string) => formatDay(d, { day: "2-digit", month: "short", year: "numeric" }).replace(/ /g, "-");
+  const isLab = (h: IpdHead) => /^lab/i.test(h.code) || /^lab/i.test(h.name);
+  const charges = heads.filter((h) => h.type === "charge");
+  const group = (h: IpdHead) => {
+    const rows = a.entries.filter((e) => e.head_id === h.id);
+    const total = rows.reduce((s, e) => s + e.amount, 0);
+    if (!rows.length) return { total: 0, html: "" };
+    const body = rows.map((e) => `<tr><td>${esc(e.note || h.name)}</td><td class="r">1.00</td><td class="r">${money(e.amount)}</td><td class="r">${money(e.amount)}</td></tr>`).join("");
+    return { total, html: `<tr class="grp"><td colspan="4">${esc(h.name.toUpperCase())}</td></tr>${body}<tr class="sub"><td colspan="3" class="r">Sub Total</td><td class="r">${money(total)}</td></tr>` };
+  };
+  const parts = charges.filter((h) => !isLab(h)).map(group);
+  const gross = parts.reduce((s, p) => s + p.total, 0);
+  const lab = charges.filter(isLab).reduce((s, h) => s + group(h).total, 0);
+  const total = gross + lab;
+  const deposit = a.received;
+  const refund = a.payouts;
+  const paid = deposit - refund;
+  const doctors = a.doctors || "—";
+  const sex = info?.patient.gender ? info.patient.gender[0].toUpperCase() + info.patient.gender.slice(1) : "";
+  const sumRow = (l: string, v: number, cls = "") => `<tr class="${cls}"><td>${l}</td><td>:</td><td class="r">${money(v)}</td></tr>`;
+  const html = `<div class="ipd">
+    <div class="lh"><h1>${esc(info?.hospital.name ?? siteConfig.name)}</h1><p>${esc(info?.hospital.address ?? "")}</p>${info?.hospital.phone ? `<p>Contact No - ${esc(info.hospital.phone)}</p>` : ""}</div>
+    <div class="ttl">Patient IPD Bills Summary</div>
+    <div class="info"><div>
+      <p><b>Patient Name</b>: ${esc(a.patient_name)}</p>
+      <p><b>Age/Gender</b>: ${info?.patient.age != null ? `${info.patient.age} Years` : ""} ${esc(sex)}</p>
+      <p><b>Address</b>: ${esc(info?.patient.address ?? "")}</p>
+      <p><b>Consultant Dr.</b>: ${esc(doctors)}</p>
+      <p><b>DOA</b>: ${day(a.admission_date)}</p></div>
+      <div><p><b>Patient Reg No</b>: ${esc(a.patient_code ?? "")}</p><p><b>Patient IPD No</b>: ${a.id}</p>
+      <p><b>Bill Date</b>: ${day(a.discharge_date ?? new Date().toISOString().slice(0, 10))}</p>${a.discharge_date ? `<p><b>DOD</b>: ${day(a.discharge_date)}</p>` : ""}</div></div>
+    <table><thead><tr><th>ServiceName</th><th class="r">Quantity</th><th class="r">Rate</th><th class="r">TotalAmount</th></tr></thead><tbody>${parts.map((p) => p.html).join("")}</tbody></table>
+    <table class="sum"><tbody>${sumRow("Gross Amount", gross)}${sumRow("Lab Bills Amount", lab)}${sumRow("Total Amount", total, "big")}${sumRow("Total Paid Amount", paid)}${sumRow("Balance Amount", total - paid, "big")}</tbody></table>
+    <p><b>Deposit : ${money(deposit)}</b> &nbsp;&nbsp;&nbsp; <b>Refund : - ${money(refund)}</b></p>
+    <div class="sig"><span>Bill Printed By : ${esc(info?.printed_by ?? "")}</span><span>Thank You.</span><span>Authorized Signatory</span></div></div>`;
+  return openPrint(`IPD bill ${a.patient_name}`, html, IPD_STYLE);
 }
 
 /** The bill and receipts for an order. */

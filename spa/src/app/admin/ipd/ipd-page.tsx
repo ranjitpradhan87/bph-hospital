@@ -19,6 +19,7 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError, api } from "@/lib/api";
+import { printIpdBill } from "@/lib/print-report";
 import { useAuth } from "@/lib/auth/auth-provider";
 import { RequireAuth } from "@/lib/auth/require-auth";
 import { downloadFile } from "@/lib/download";
@@ -537,6 +538,7 @@ function CaseDialog({ id, heads, manage, onClose }: { id: number; heads: IpdHead
           )}
           <DialogFooter>
             {manage && a && <><Button variant="ghost" className="text-destructive" onClick={() => setRemoving(true)}>Delete admission</Button><Button variant="outline" onClick={() => setEditing(true)}>Edit details</Button></>}
+            {a && <Button variant="outline" onClick={() => printIpdBill(a, heads) || toast.error("Allow pop-ups to print")}>Print bill</Button>}
             <Button onClick={onClose}>Done</Button>
           </DialogFooter>
         </DialogContent>

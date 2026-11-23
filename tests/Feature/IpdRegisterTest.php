@@ -30,6 +30,13 @@ class IpdRegisterTest extends HmsTestCase
         ])->assertCreated()->json();
     }
 
+    public function test_a_single_admission_carries_what_the_printed_bill_needs(): void
+    {
+        $a = $this->admit();
+        $r = $this->actingAs($this->user('receptionist'))->getJson(self::API."/ipd/admissions/{$a['id']}")->assertOk()->assertJsonStructure(['bill' => ['hospital' => ['name', 'phone', 'address'], 'patient' => ['age', 'gender', 'address'], 'printed_by']])->json();
+        $this->assertNotEmpty($r['bill']['printed_by']);
+    }
+
     public function test_access_is_limited_to_ipd_roles(): void
     {
         $this->actingAs($this->user('nurse'))->getJson(self::API.'/ipd/admissions')->assertStatus(403);

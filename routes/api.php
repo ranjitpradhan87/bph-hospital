@@ -99,7 +99,7 @@ Route::middleware('auth')->group(function () {
         Route::get('/days', [IpdController::class, 'days'])->middleware('permission:ipd.read');
         Route::get('/admissions', [IpdController::class, 'admissions'])->middleware('permission:ipd.read');
         Route::post('/admissions', [IpdController::class, 'storeAdmission'])->middleware('permission:ipd.manage');
-        Route::get('/admissions/{admission}', [IpdController::class, 'showAdmission'])->middleware('permission:ipd.read')->whereNumber('admission');
+        Route::get('/admissions/{admission}', [IpdController::class, 'billAdmission'])->middleware('permission:ipd.read')->whereNumber('admission');
         Route::put('/admissions/{admission}', [IpdController::class, 'updateAdmission'])->middleware('permission:ipd.manage')->whereNumber('admission');
         Route::delete('/admissions/{admission}', [IpdController::class, 'deleteAdmission'])->middleware('permission:ipd.manage')->whereNumber('admission');
         Route::post('/admissions/{admission}/entries', [IpdController::class, 'addEntry'])->middleware('permission:ipd.manage')->whereNumber('admission');
